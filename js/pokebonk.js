@@ -72,7 +72,7 @@ const controls = {
 const NOISE_SEED = 42;            // cámbiala si quieres otro mapa
 const noise = new Noise(NOISE_SEED); // requiere noisejs (Perlin2)
 
-// ======== Charizard (FBX + anims) — estilo prácticas ========
+// ======== Charizard (FBX + anims) — estilo compañero ========
 const CHAR_TARGET_HEIGHT = 1.6;
 
 const A_IDLE = 0;
@@ -84,10 +84,12 @@ let currentCharAnimationIndex = A_IDLE;
 
 let mixer = null;
 
-// Acciones por índice: A_IDLE/A_RUN/A_PASS
-let actions = [];            // actions[0|1|2] = AnimationAction
-let animationNames = [];     // nombres descriptivos
-// Temporizador para reproducir una acción puntual (pase/grito) y volver a la base
+// Acciones por nombre (al estilo compañero) y mapeo índice->nombre
+let actions = {};            // actions['idle'|'run'|'pass'|'jump'|'back'] = AnimationAction
+let animationNames = [];     // por índice -> nombre
+let currentCharAction = null;
+
+// Temporizadores para acciones puntuales
 let timer_pass = 0;          // en segundos
 let timer_jump = 0;          // en segundos
 
@@ -96,24 +98,29 @@ let enemies = [];
 let enemySpawnTimer = 0;
 let waveNumber = 0;
 const ENEMY_SPAWN_INTERVAL = 5; // segundos
-const ENEMIES_PER_WAVE = 5;
+const ENEMIES_PER_WAVE = 10;
 const ENEMY_SPEED = 1.2; // unidades/seg
 const ENEMY_HP = 3;
 const ENEMY_TARGET_HEIGHT = 1.6;
-const ENEMY_BAR_HEIGHT = ENEMY_TARGET_HEIGHT * 0.65; // altura de la barra
+const ENEMY_BAR_HEIGHT = ENEMY_TARGET_HEIGHT * 1.3; // altura de la barra
 
-// ======= Mewtwo (FBX + anims) — estilo prácticas ========
-let mewtwoPrefab = null;           // FBX base (T-pose o reposo)
-let mewtwoReady = false;           // Señal de que ambos cargaron
+// ======= Mewtwo (FBX + anims) — estilo compañero (clips globales, acciones por instancia) ========
+let mewtwoPrefab = null;           // FBX base
+let mewtwoReady = false;           // Señal de que todo lo necesario cargó
 
 const E_IDLE = 0;
 const E_WALK = 1;
 const E_DIE = 2;
 
-let e_actions = [];
-let e_animationNames = [];
+let e_actions = {};        // clips por nombre (no acciones)
+let e_animationNames = []; // mapeo índice->nombre (Idle/Walk/Die)
 
 let loadedCount = 0;
+
+let stats;
+
+const DEBUG_ENEMY_HITBOX = true;
+const ENEMY_HIT_RADIUS = 1.0;
 
 const healthBarContainer = document.createElement('div');
 healthBarContainer.id = 'health-bar-container';
@@ -303,6 +310,13 @@ function init() {
     }
   });
 
+  stats = new Stats();
+  stats.dom.style.position = 'absolute';
+    stats.dom.style.bottom = '10px';
+    stats.dom.style.right = '10px';
+    stats.dom.style.top = 'auto';
+    stats.dom.style.left = 'auto';
+    document.body.appendChild(stats.dom);
 }
 
 function onMouseMove(event) {
@@ -457,16 +471,13 @@ function addPlayer() {
         const mats = Array.isArray(n.material) ? n.material : [n.material];
         mats.forEach(m => {
           if (!m) return;
-          // si hay textura, ponla en sRGB
           if (m.map) m.map.encoding = THREE.sRGBEncoding;
-          // por si el color es por vértice
           if (n.geometry && n.geometry.attributes && n.geometry.attributes.color) {
             m.vertexColors = true;
           }
-          // MUY IMPORTANTE para animación
           m.skinning = !!n.isSkinnedMesh;
           m.needsUpdate = true;
-          m.side = THREE.FrontSide; // o DoubleSide si ves recortes
+          m.side = THREE.FrontSide;
           m.transparent = false;
           m.depthWrite = true;
         });
@@ -480,37 +491,61 @@ function addPlayer() {
     player.position.set(p_pos.x, p_pos.y - playerRadius, p_pos.z);
     player.rotation.y = angulo;
 
-    // --- Animaciones ---
-    const CLIPS = [
-      ['models/charizard/Idle.fbx',        A_IDLE],
-      ['models/charizard/Walking.fbx',     A_RUN],
-      ['models/charizard/Yelling Out.fbx', A_PASS],
-      ['models/charizard/Jumping.fbx',     A_JUMP],
-      ['models/charizard/Walking Backwards.fbx',   A_BACKWARDS],
+    // --- Animaciones (mismo patrón que tu compa) ---
+    const CHAR_ANIMS = [
+      { path: 'models/charizard/Idle.fbx',                  name: 'idle' },
+      { path: 'models/charizard/Walking.fbx',               name: 'run' },
+      { path: 'models/charizard/Yelling Out.fbx',           name: 'pass', once: true },
+      { path: 'models/charizard/Jumping.fbx',               name: 'jump', once: true },
+      { path: 'models/charizard/Walking Backwards.fbx',     name: 'back' }
     ];
-    actions = []; animationNames = []; currentCharAnimationIndex = A_IDLE;
 
-    CLIPS.forEach(([file, idx]) => {
-      loader.load(file, (animData) => {
-        if (animData.animations && animData.animations.length) {
-          const name = file.split('/').pop().split('.').slice(0, -1).join('.');
-          const act = mixer.clipAction(animData.animations[0]);
-          actions[name] = act; animationNames[idx] = name;
-          if (idx === A_IDLE) act.reset().play();
-          if (idx === A_PASS) { console.log('Anim A_PASS cargada.'); }
-          if (idx === A_JUMP) { console.log('Anim A_JUMP cargada.'); }
-        } else {
-          console.warn('Anim sin clips:', file);
+    actions = {}; animationNames = [];
+    animationNames[A_IDLE] = 'idle';
+    animationNames[A_RUN]  = 'run';
+    animationNames[A_PASS] = 'pass';
+    animationNames[A_JUMP] = 'jump';
+    animationNames[A_BACKWARDS] = 'back';
+
+    let loadedAnimations = 0;
+
+    CHAR_ANIMS.forEach((animInfo) => {
+      loader.load(animInfo.path, function (animData) {
+        if (animData.animations && animData.animations.length > 0) {
+          const action = mixer.clipAction(animData.animations[0]);
+          if (animInfo.once) {
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+          }
+          actions[animInfo.name] = action;
         }
+        loadedAnimations++;
+        if (loadedAnimations === CHAR_ANIMS.length) {
+          // Cuando estén todas, arrancamos en idle
+          switchCharAnimation('idle');
+        }
+      }, undefined, function() {
+        loadedAnimations++;
       });
     });
 
-    console.log('✅ Charizard cargado con materiales del FBX.');
-    console.log("accion A_PASS", actions[A_PASS]); // Asegúrate que no es undefined
+    console.log('✅ Charizard cargado con patrones de anim del compañero.');
   },
   undefined,
   (err) => console.error('❌ Error cargando Charizard.fbx', err));
 
+}
+
+function switchCharAnimation(newName) {
+  const newAction = actions[newName];
+  if (!newAction) return;
+  if (currentCharAction !== newAction) {
+    if (currentCharAction) currentCharAction.fadeOut(0.2);
+    newAction.reset();
+    newAction.fadeIn(0.2);
+    newAction.play();
+    currentCharAction = newAction;
+  }
 }
 
 function stripScaleTracks(clip) {
@@ -534,12 +569,8 @@ function wrapAndNormalize(fbx, targetH) {
   container.scale.setScalar(s);
 
   // Reposiciona el FBX para que los pies queden en y=0 dentro del contenedor
-  // (no toques fbx.scale; sólo offset interno)
   fbx.position.sub(new THREE.Vector3(center.x, box.min.y, center.z));
-
-  // Nombra el nodo animado para encontrarlo tras clonar
   fbx.name = 'MewtwoAnimatedRoot';
-
   container.add(fbx);
   return container;
 }
@@ -549,13 +580,11 @@ function loadMewtwo() {
   loadedCount = 0;
 
   // Cargar modelo base
-  loader.load('models/mewtwo/mewtwo.fbx', (fbx) => {
+  loader.load('models/mewtwo/mewtwo.fbx', function (fbx) {
     mewtwoPrefab = fbx;
     normalizeAndFloor(fbx, ENEMY_TARGET_HEIGHT);
 
-    console.log('Existe fbx? ', !!fbx);
-
-    fbx.traverse((n) => {
+    mewtwoPrefab.traverse((n) => {
       if (n.isLight || n.isCamera) n.parent && n.parent.remove(n);
       if (n.isMesh) {
         n.castShadow = true;
@@ -563,7 +592,7 @@ function loadMewtwo() {
         const mats = Array.isArray(n.material) ? n.material : [n.material];
         mats.forEach(m => {
           if (m.map) m.map.encoding = THREE.sRGBEncoding;
-          m.skinning = !!n.isSkinnedMesh;
+          m.skinning = true;
           m.needsUpdate = true;
           m.side = THREE.FrontSide;
           m.transparent = false;
@@ -572,10 +601,10 @@ function loadMewtwo() {
         n.frustumCulled = false;
       }
     });
-    checkIfMewtwoIsReady(); // 👈 llamado clave
+    checkIfMewtwoIsReady();
   }, undefined, (e) => console.error('❌ Error mewtwo.fbx', e));
 
-  // Cargar animaciones
+  // Cargar animaciones como CLIPS (no acciones aún)
   const animations = [
     ['models/mewtwo/Idle.fbx', E_IDLE],
     ['models/mewtwo/Walking.fbx', E_WALK],
@@ -588,36 +617,27 @@ function loadMewtwo() {
         const clip = animData.animations[0];
         const name = animFile.split('/').pop().split('.').slice(0, -1).join('.');
         const clipNoScale = stripScaleTracks(clip);
-        e_actions[name] = clipNoScale;
-        e_animationNames[index] = name;
+        e_actions[name] = clipNoScale;       // guardamos CLIP por nombre
+        e_animationNames[index] = name;      // mapeo de índice -> nombre de clip
         console.log(`✅ Mewtwo animación ${name} cargada.`);
       } else {
         console.warn('⚠️ Sin clips de animación en', animFile);
       }
-
       loadedCount++;
       checkIfMewtwoIsReady();
-    }, undefined, (e) => console.error('❌ Error mewtwo.fbx', e));
+    }, undefined, (e) => console.error('❌ Error mewtwo.anim', e));
   });
 }
 
 function checkIfMewtwoIsReady() {
-  console.log(`🔄 Verificando Mewtwo: loadedCount = ${loadedCount}, mewtwoPrefab = ${!!mewtwoPrefab}`);
-  
-  // ✅ Listo en cuanto esté el prefab (ignora anims por ahora)
-  if (mewtwoPrefab && !mewtwoReady) {
+  const walkReady = !!e_actions[e_animationNames[E_WALK]];
+  if (mewtwoPrefab && !mewtwoReady && walkReady) {
     mewtwoReady = true;
-    console.log('✅ Mewtwo prefab listo. Lanzando primera oleada.');
-    
-    // Primera oleada inmediatamente
-    if (spawnEnemies(waveNumber)) {
-      waveNumber++;
-    }
-    // Para que la siguiente salga a los 5 s
+    console.log('✅ Mewtwo listo. Lanzando primera oleada.');
+    spawnEnemies(waveNumber++);
     enemySpawnTimer = 0;
   }
 }
-
 
 // Re‐escala en 2 pasadas para garantizar altura exacta y apoya en y=0
 function normalizeAndFloor(obj, targetH) {
@@ -644,43 +664,10 @@ function normalizeAndFloor(obj, targetH) {
 
 
 function changeCharAnimation(index) {
-    if (currentCharAnimationIndex === index) return;
-
-    const prevAction = actions[animationNames[currentCharAnimationIndex]];
-    const nextAction = actions[animationNames[index]];
-
-    // Reproduce la siguiente animación si existe
-    if (nextAction) {
-        nextAction.reset().play();
-    }
-
-    // Detiene la animación anterior si existe
-    if (prevAction) {
-        prevAction.stop();
-    }
-
+    const name = animationNames[index];
+    if (!name) return;
+    switchCharAnimation(name);
     currentCharAnimationIndex = index;
-}
-
-function changeMewtwoAnimation(index, enemyHitIndex) {
-    
-
-    if (currentMewtwoAnimationIndex[enemyHitIndex] === index) return;
-
-    const prevAction = e_actions[e_animationNames[currentMewtwoAnimationIndex[enemyHitIndex]]];
-    const nextAction = e_actions[e_animationNames[index]];
-
-    // Reproduce la siguiente animación si existe
-    if (nextAction) {
-        nextAction.reset().play();
-    }
-
-    // Detiene la animación anterior si existe
-    if (prevAction) {
-        prevAction.stop();
-    }
-
-    currentMewtwoAnimationIndex[enemyHitIndex] = index;
 }
 
 function addMiniMarker() {
@@ -845,17 +832,16 @@ function shoot() {
 
   // --- Carga del modelo Fireball (sin luz ni emisivo) ---
   const loader = new THREE.GLTFLoader();
-  //const path = 'models/sculptjanuary_2018__jan_14/scene.gltf'
   const path = 'models/fireball_simple.gltf';
   loader.load(path, (gltf) => {
     const fireball = gltf.scene;
-    fireball.scale.setScalar(0.01); // or whatever scale looks good
+    fireball.scale.setScalar(0.01);
     fireball.position.copy(origin);
     fireball.traverse((child) => {
       if (child.isMesh) {
         child.material = new THREE.MeshStandardMaterial({
-          color: 0xff6600,        // naranja fuego
-          emissive: 0xff3300,     // luz propia naranja-roja
+          color: 0xff6600,
+          emissive: 0xff3300,
           roughness: 0.2,
           metalness: 0.0
         });
@@ -876,18 +862,12 @@ function shoot() {
   });
 
   shootCooldown = 0.8;
-
-  let nLights = 0;
-  scene.traverse(o => { if (o.isLight) nLights++; });
-  console.log('Luces en escena:', nLights);
-
 }
 
 
 function updateProjectiles(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
-    const prev = b.mesh.position.clone();
 
     // Integración
     b.mesh.position.addScaledVector(b.vel, dt);
@@ -919,7 +899,7 @@ function updateProjectiles(dt) {
 
     // --- Colisión con enemigos ---
     const enemyHitIndex = enemies.findIndex(e => {
-      return b.mesh.position.distanceTo(e.mesh.position) < (BULLET_RADIUS + 1);
+      return b.mesh.position.distanceTo(e.mesh.position) < (BULLET_RADIUS + 2);
     });
     if (enemyHitIndex >= 0) {
       const enemy = enemies[enemyHitIndex];
@@ -958,7 +938,7 @@ function removeBullet(index) {
   bullets.splice(index, 1);
 }
 
-function spawnEnemies(wave) {
+function spawnEnemies(wave) { 
   if (!mewtwoReady || !mewtwoPrefab) {
     console.warn('⏳ Mewtwo aún no cargó; reintentará en la próxima oleada.');
     return false;
@@ -966,14 +946,18 @@ function spawnEnemies(wave) {
 
   for (let i = 0; i < ENEMIES_PER_WAVE + wave; i++) {
     const { x, z } = randomXZ();
-    const y = heightFunc(x, z);
+    const y = heightFunc(x, z) + 5.0; // empezar un poco arriba
 
     // Raíz del enemigo = Group (modelo + barra de vida)
     const enemyRoot = new THREE.Group();
-    const model = mewtwoPrefab.clone(true);
-    model.traverse(n=>{
-      if (n.isLight || n.isCamera) n.parent && n.parent.remove(n);
-      if (n.isMesh) n.frustumCulled = false;
+    const model = THREE.SkeletonUtils.clone(mewtwoPrefab);
+
+    model.traverse(n => {
+      if (n.isMesh) { n.frustumCulled = false; n.castShadow = n.receiveShadow = true; }
+      if (n.isSkinnedMesh) {
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach(m => { if (m) { m.skinning = true; m.needsUpdate = true; } });
+      }
     });
 
     const animRoot = model.getObjectByName('MewtwoAnimatedRoot') || model;
@@ -992,24 +976,64 @@ function spawnEnemies(wave) {
     // Colocar al terreno
     enemyRoot.position.set(x, y, z);
 
-    scene.add(enemyRoot);
-    
-    // Mixer propio y acción en bucle
-    const mixer = new THREE.AnimationMixer(animRoot);
-    const walkClip = e_actions[e_animationNames[E_WALK]];
-    if (walkClip) {
-      const action = mixer.clipAction(walkClip);
-      action.reset().setLoop(THREE.LoopRepeat, Infinity).play();
-    } else {
-      console.warn('⚠️ Mewtwo walkClip no disponible al spawnear enemigo.');
+    let hitbox = null;
+
+    if (DEBUG_ENEMY_HITBOX) {
+    const hitboxGeo = new THREE.CylinderGeometry(
+        ENEMY_HIT_RADIUS, ENEMY_HIT_RADIUS, ENEMY_TARGET_HEIGHT, 24
+    );
+    const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: false });
+    hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+    hitbox.name = 'EnemyHitbox';
+    hitbox.frustumCulled = false;
+    hitbox.position.set(0, ENEMY_TARGET_HEIGHT * 0.5, 0);
+    enemyRoot.add(hitbox);
     }
 
+    scene.add(enemyRoot);
+
+    // Mixer propio + acciones por instancia (mismo patrón que compañero)
+    const mixer = new THREE.AnimationMixer(animRoot);
+    const enemyActions = {};
+    const idleClip = e_actions[e_animationNames[E_IDLE]];
+    const walkClip = e_actions[e_animationNames[E_WALK]];
+    const dieClip  = e_actions[e_animationNames[E_DIE]];
+
+    if (idleClip) {
+      enemyActions.idle = mixer.clipAction(idleClip).setLoop(THREE.LoopRepeat, Infinity);
+    }
+    if (walkClip) {
+      enemyActions.walk = mixer.clipAction(walkClip).setLoop(THREE.LoopRepeat, Infinity);
+    }
+    if (dieClip) {
+      enemyActions.die = mixer.clipAction(dieClip);
+      enemyActions.die.setLoop(THREE.LoopOnce, 1);
+      enemyActions.die.clampWhenFinished = true;
+    }
+
+    let currentAction = null;
+    const play = (name) => {
+      const next = enemyActions[name];
+      if (!next) return;
+      if (currentAction && currentAction !== next) currentAction.fadeOut(0.2);
+      next.reset().fadeIn(0.2).play();
+      currentAction = next;
+    };
+
+    // Por defecto, caminan
+    if (enemyActions.walk) play('walk'); else if (enemyActions.idle) play('idle');
+
     enemies.push({
-      mesh: enemyRoot,       // <- usamos .mesh en tu lógica
+      mesh: enemyRoot,
       hp: ENEMY_HP,
       healthBar: bar,
-      mixer: mixer,         // <- NUEVO: mixer por enemigo
-      dead: false
+      mixer: mixer,
+      actions: enemyActions,
+      playAction: play,
+      currentAction: currentAction,
+      dead: false,
+      spinHitbox: false,
+      spinSpeed: 6.0
     });
   }
 
@@ -1045,13 +1069,17 @@ function updateEnemies(dt) {
     e.mesh.position.y = groundY;
 
     // Actualiza barra de vida si existe
-    if (e.healthBar) {
+    if (e.healthBar && e.healthBar.visible) {
       e.healthBar.position.set(0, ENEMY_BAR_HEIGHT, 0);
       e.healthBar.scale.x = Math.max(0.001, e.hp / ENEMY_HP);
       e.healthBar.material.color.set(
         e.hp <= 1 ? 0xff0000 : e.hp === 2 ? 0xffff00 : 0x00ff00
       );
       e.healthBar.lookAt(camera.position);
+    }
+
+    if (e.spinHitbox && e.hitbox) {
+        e.hitbox.rotation.xa += e.spinSpeed * dt;
     }
 
     // Chequeo colisión jugador
@@ -1070,14 +1098,21 @@ function updateEnemies(dt) {
 function killEnemy(e, index) {
   if (e.dead) return;
   e.dead = true;
-  const dieClip = e_actions[e_animationNames[E_DIE]];
-  if (dieClip) {
-    e.mixer.stopAllAction();
-    const action = e.mixer.clipAction(dieClip);
-    action.reset().play();
+  if (e.actions && e.actions.die) {
+    if (e.currentAction) e.currentAction.fadeOut(0.15);
+    e.actions.die.reset().fadeIn(0.15).play();
+    e.currentAction = e.actions.die;
   } else {
-    console.warn('⚠️ No se encontró dieClip para enemigo');
+    // Fallback por si algo falló: intentar con el clip directamente
+    const dieClip = e_actions[e_animationNames[E_DIE]];
+    if (dieClip) {
+      e.mixer.stopAllAction();
+      e.mixer.clipAction(dieClip).reset().play();
+    }
   }
+  if (e.healthBar) { e.healthBar.visible = false; }
+  if (e.hitbox) { e.spinHitbox = true; }
+
   setTimeout(() => {
     scene.remove(e.mesh);
     enemies.splice(index, 1);
@@ -1109,10 +1144,6 @@ function update(dt) {
   // Dirección de mirada (en XZ)
   const forward = new THREE.Vector3(Math.sin(angulo), 0, Math.cos(angulo));
   const right   = new THREE.Vector3(forward.z, 0, -forward.x);
-
-  // Gira con A/D
-  // if (controls.moveLeft)  angulo += 0.05;
-  // if (controls.moveRight) angulo -= 0.05;
 
   angulo = THREE.MathUtils.euclideanModulo(angulo + Math.PI, Math.PI * 2) - Math.PI;
 
@@ -1232,7 +1263,7 @@ function update(dt) {
     camera.fov += (targetFov - camera.fov) * (isSprinting ? 0.18 : 0.12);
     camera.updateProjectionMatrix();
   } else {
-    // ========= Tu TPS actual (lo dejo igual) =========
+    // ========= TPS =========
     const isMoving = (controls.moveForward || controls.moveBackward);
     const isSprinting = sprint && isMoving;
 
@@ -1290,13 +1321,15 @@ function update(dt) {
     reticle.style.display = isSprinting ? 'none' : 'block';
   }
 
-  updateEnemies(dt); // 👈 Llama la función que mueve enemigos
+  updateEnemies(dt);
 
 }
 
 // ======== Render =========
 function render() {
   requestAnimationFrame(render);
+
+  stats.begin();
 
   const now = performance.now() / 1000;
   const dt = Math.min(0.05, now - prevTime); // clamp para evitar saltos grandes
@@ -1322,23 +1355,6 @@ function render() {
   renderer.clearDepth();
   renderer.render(scene, cameraTop);
   renderer.setScissorTest(false);
-}
 
-/*
-IMPLEMENTACIONES:
-gpt
-- Ampliar tamaño enemigos en el minimapa
-- Guardar récord máxima puntuación
-- Árboles alrededor del mapa para que no se vean huecos
-- Menú inicio y fin
-yo
-- Agregar fondo
-- Animación enemigo muerte y de muerte propia
-- Corregir animación de salto
-- Corregir animación de bola de fuego
-- Cambiar posición origen bola de fuego
-- Texturas suelo
-innecesario
-- Refracción agua
-- Iluminación día/noche y más enemigos por la noche
-*/
+  stats.end();
+}
