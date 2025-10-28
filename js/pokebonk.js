@@ -1,127 +1,147 @@
-// ======== Config global ========
-let renderer, scene, camera, cameraTop;
+// ===== Estructura general del juego (THREE.js) =====
+// Este archivo configura render, camaras, terreno, jugador, enemigos y bucles de juego.
+// Comentarios en estilo impersonal y sin acentos.
 
-const R = 200;            // semitamaño del mapa
-const segments = 400;    // subdivisión del terreno
 
-let player, playerRadius = 0.25;
-let firstPerson = false;
-let sprint = false;
-const baseFov = 50, sprintFov = 62;
-const aimUpNormal = 1.1;      // cuánto por encima del jugador mira (modo normal)
-const aimUpSprint = 1.0;      // en sprint, un pelín menos para compensar el FOV
-const lookAheadNormal = 3.2;  // mira por delante (normal)
-const lookAheadSprint = 4.0;  // mira por delante (sprint)
+// ==== Render y escena ====
+let renderer;
+let scene;
+let camera;
+let cameraTop;
+
+
+// ==== Parametros de terreno y mundo ====
+const R = 200;                 
+const segments = 400;          
+
+
+// ==== Estado del jugador ====
+let player;
+const playerRadius = 0.25;     
+let firstPerson = false;       
+let sprint = false;            
+const baseFov = 50;
+const sprintFov = 62;          
+const aimUpNormal = 1.1;       
+const aimUpSprint = 1.0;       
+const lookAheadNormal = 3.2;   
+const lookAheadSprint = 4.0;   
 let playerHP = 5;
 const playerMaxHP = 5;
 
-// Física de salto
-let vy = 0;                 // velocidad vertical
-let grounded = false;       // está en el suelo
-const GRAVITY = -25;        // unidades / s^2
-const JUMP_SPEED = 8;       // impulso de salto
 
-// Delta time para física
+// ==== Fisica vertical (salto, gravedad) ====
+let vy = 0;                    
+let grounded = false;          
+const GRAVITY = -25;           
+const JUMP_SPEED = 8;          
+
+
+// Tiempo previo para delta time
 let prevTime = performance.now() / 1000;
 
+
+// Marcador del minimapa
 let miniMarker;
 
-let angulo = -Math.PI * 0.5;   // rumbo inicial (radianes). 0 => +Z
-let bobT = 0;                 // tiempo para head-bob
-const SPRINT_MUL = 1.7;       // multiplicador de velocidad en sprint
-let prevYaw = angulo;   // para medir velocidad de giro
-let bobBlend = 0;       // 0..1, suaviza entrada/salida del bob
-let pitch = 0;
-const maxPitch = 0.8; // ~46º
 
-// Estabilizador cámara 1ª persona
-let camY = 0;                // altura suavizada del ojo
-const CAM_Y_SMOOTH = 12;     // 1/seg — mayor = sigue más al jugador
-const FP_LOOK_DIST = 6;      // distancia de enfoque en FP
+// Orientacion de camara/jugador
+let angulo = -Math.PI * 0.5;   
+let pitch = 0;                 
+const maxPitch = 0.8;          
 
-// ======== Árboles ========
+
+// Suavizado de altura de camara en primera persona
+let camY = 0;                  
+const CAM_Y_SMOOTH = 12;       
+const FP_LOOK_DIST = 6;        
+
+
+// ==== Arboles y colisiones cilidricas ====
 let treesGroup = null;
 let treePrefab = null;
+const treeColliders = [];      
+const DEBUG_COLLIDERS = false; 
+let collidersGroup;            
 
-// === Colisiones árboles ===
-const treeColliders = [];    // {cx, cz, yMin, yMax, r}
-const DEBUG_COLLIDERS = false;
-let collidersGroup;          // (opcional visualización)
 
-// ======== Disparo ========
-const BULLET_SPEED = 28;     // unidades/seg
-const BULLET_LIFETIME = 6.0; // segundos
-const BULLET_RADIUS = 0.06;
-let bullets = [];
-let shootCooldown = 0;       // anti-spam
+// ==== Proyectiles ====
+const BULLET_SPEED = 28;       
+const BULLET_LIFETIME = 6.0;   
+const BULLET_RADIUS = 0.06;    
+let bullets = [];              
+let shootCooldown = 0;         
 
+
+// Ventana de invulnerabilidad del jugador
 let playerHurtCooldown = 0;
 
 
-// Movimiento / control
-const p_pos = new THREE.Vector3(0, 0, 0);
+// Posicion del jugador y bandera de controles
+const p_pos = new THREE.Vector3(0, 0, 0); 
 const controls = {
   moveForward: false,
   moveBackward: false,
   moveLeft: false,
   moveRight: false,
-  speed: R*0.001
+  speed: R * 0.001            
 };
 
-// === Perlin global con semilla fija para coherencia terreno<->sampleo ===
-const NOISE_SEED = 42;            // cámbiala si quieres otro mapa
-const noise = new Noise(NOISE_SEED); // requiere noisejs (Perlin2)
 
-// ======== Charizard (FBX + anims) — estilo compañero ========
-const CHAR_TARGET_HEIGHT = 1.6;
+// Perlin global con semilla fija para reproducibilidad del terreno
+const NOISE_SEED = 42;                 
+const noise = new Noise(NOISE_SEED);   
+
+
+// ==== Animaciones del jugador (Charizard) ====
+const CHAR_TARGET_HEIGHT = 1.6;        
 
 const A_IDLE = 0;
-const A_RUN  = 1;
+const A_RUN = 1;
 const A_PASS = 2;
 const A_JUMP = 3;
 const A_BACKWARDS = 4;
-let currentCharAnimationIndex = A_IDLE;
 
-let mixer = null;
+let mixer = null;                       
+let actions = {};                       
+let animationNames = [];                
+let currentCharAction = null;           
 
-// Acciones por nombre (al estilo compañero) y mapeo índice->nombre
-let actions = {};            // actions['idle'|'run'|'pass'|'jump'|'back'] = AnimationAction
-let animationNames = [];     // por índice -> nombre
-let currentCharAction = null;
 
-// Temporizadores para acciones puntuales
-let timer_pass = 0;          // en segundos
-let timer_jump = 0;          // en segundos
+let timer_pass = 0;                     
+let timer_jump = 0;                     
 
-// Enemigos
+
+// ==== Enemigos y oleadas ====
 let enemies = [];
 let enemySpawnTimer = 0;
 let waveNumber = 0;
-const ENEMY_SPAWN_INTERVAL = 10; // segundos
-const ENEMIES_PER_WAVE = 5;
-const ENEMY_SPEED = 1.2; // unidades/seg
-const ENEMY_HP = 3;
-const ENEMY_TARGET_HEIGHT = 1.6;
-const ENEMY_BAR_HEIGHT = ENEMY_TARGET_HEIGHT * 1.3; // altura de la barra
+const ENEMY_SPAWN_INTERVAL = 10;        
+const ENEMIES_PER_WAVE = 5;             
+const ENEMY_SPEED = 1.2;                
+const ENEMY_HP = 3;                     
+const ENEMY_TARGET_HEIGHT = 1.6;        
+const ENEMY_BAR_HEIGHT = ENEMY_TARGET_HEIGHT * 1.3; 
 
-// ======= Mewtwo (FBX + anims) — estilo compañero (clips globales, acciones por instancia) ========
-let mewtwoPrefab = null;           // FBX base
-let mewtwoReady = false;           // Señal de que todo lo necesario cargó
+
+// ==== Modelo base y clips de Mewtwo ====
+let mewtwoPrefab = null;                
+let mewtwoReady = false;                
 
 const E_IDLE = 0;
 const E_WALK = 1;
 const E_DIE = 2;
 
-let e_actions = {};        // clips por nombre (no acciones)
-let e_animationNames = []; // mapeo índice->nombre (Idle/Walk/Die)
+let e_actions = {};                     
+let e_animationNames = [];              
 
-let loadedCount = 0;
+let stats;                              
 
-let stats;
+const DEBUG_ENEMY_HITBOX = true;        
+const ENEMY_HIT_RADIUS = 1.0;           
 
-const DEBUG_ENEMY_HITBOX = true;
-const ENEMY_HIT_RADIUS = 1.0;
 
+// ==== UI: vida y puntuacion ====
 const healthBarContainer = document.createElement('div');
 healthBarContainer.id = 'health-bar-container';
 Object.assign(healthBarContainer.style, {
@@ -150,7 +170,7 @@ healthBarContainer.appendChild(healthBar);
 document.body.appendChild(healthBarContainer);
 
 let score = 0;
-const startTime = performance.now(); // al cargar la partida
+const startTime = performance.now();    
 
 const scoreDiv = document.createElement('div');
 Object.assign(scoreDiv.style, {
@@ -163,56 +183,76 @@ Object.assign(scoreDiv.style, {
   textShadow: '1px 1px 2px #000',
   zIndex: 9999
 });
+
 scoreDiv.textContent = 'Puntos: 0';
 document.body.appendChild(scoreDiv);
 
-function createLight(){
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  dirLight.position.set(20, 40, 20);
-  dirLight.castShadow = true;
-  dirLight.shadow.mapSize.set(2048, 2048);
-  dirLight.shadow.camera.left = -50;
-  dirLight.shadow.camera.right = 50;
-  dirLight.shadow.camera.top = 50;
-  dirLight.shadow.camera.bottom = -50;
-  dirLight.shadow.camera.near = 5;
-  dirLight.shadow.camera.far = 100;
-  scene.add(dirLight);
-}
 
+// Utilidad: alias a clamp
+const clamp = THREE.MathUtils.clamp;
+
+// Calcula y acumula puntuacion por tiempo
 function addScore() {
+  
   const minutes = (performance.now() - startTime) / 60000;
   score += Math.floor(10 * minutes);
   scoreDiv.textContent = `Puntos: ${score}`;
 }
 
-
-// Misma función de altura que usas en el terreno
+// Funcion de altura del terreno basada en ruido Perlin
 function heightFunc(x, z) {
+  
   const scale1 = 0.03;
   const scale2 = 0.12;
-  const base   = noise.perlin2(x * scale1, z * scale1);
+  const base = noise.perlin2(x * scale1, z * scale1);
   const detail = 0.3 * noise.perlin2(x * scale2, z * scale2);
-  return (base + detail) + 0.25; // altura absoluta en Y
+  return (base + detail) + 0.25; 
 }
 
-// ==== Input ====
+
+// Entradas de teclado: movimiento, vista, salto y disparo
 document.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'ArrowUp':
-    case 'KeyW': controls.moveForward = true; break;
+    case 'KeyW':
+      controls.moveForward = true;
+      break;
     case 'ArrowDown':
-    case 'KeyS': controls.moveBackward = true; break;
+    case 'KeyS':
+      controls.moveBackward = true;
+      break;
     case 'ArrowLeft':
-    case 'KeyA': controls.moveLeft = true; break;
+    case 'KeyA':
+      controls.moveLeft = true;
+      break;
     case 'ArrowRight':
-    case 'KeyD': controls.moveRight = true; break;
+    case 'KeyD':
+      controls.moveRight = true;
+      break;
     case 'ShiftLeft':
-    case 'ShiftRight': sprint = true; break;
-    case 'KeyF': firstPerson = !firstPerson; if (player) player.visible = !firstPerson; break;
-    case 'Space': if (grounded) { vy = JUMP_SPEED; timer_jump=1; changeCharAnimation(A_JUMP); grounded = false; } e.preventDefault(); break;
-    case 'KeyO': 
-      if (!sprint && shootCooldown <= 0){
+    case 'ShiftRight':
+      sprint = true;
+      break;
+    case 'KeyF':
+      
+      firstPerson = !firstPerson;
+      if (player) {
+        player.visible = !firstPerson;
+      }
+      break;
+    case 'Space':
+      
+      if (grounded) {
+        vy = JUMP_SPEED;
+        timer_jump = 1;
+        changeCharAnimation(A_JUMP);
+        grounded = false;
+      }
+      e.preventDefault();
+      break;
+    case 'KeyO':
+      
+      if (!sprint && shootCooldown <= 0) {
         shoot();
         timer_pass = 2;
       }
@@ -220,23 +260,34 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Soltado de teclas
 document.addEventListener('keyup', (e) => {
   switch (e.code) {
     case 'ArrowUp':
-    case 'KeyW': controls.moveForward = false; break;
+    case 'KeyW':
+      controls.moveForward = false;
+      break;
     case 'ArrowDown':
-    case 'KeyS': controls.moveBackward = false; break;
+    case 'KeyS':
+      controls.moveBackward = false;
+      break;
     case 'ArrowLeft':
-    case 'KeyA': controls.moveLeft = false; break;
+    case 'KeyA':
+      controls.moveLeft = false;
+      break;
     case 'ArrowRight':
-    case 'KeyD': controls.moveRight = false; break;
+    case 'KeyD':
+      controls.moveRight = false;
+      break;
     case 'ShiftLeft':
-    case 'ShiftRight': sprint = false; break;
+    case 'ShiftRight':
+      sprint = false;
+      break;
   }
 });
 
 
-// ======== Boot ========
+// Secuencia de arranque
 init();
 loadTerrain();
 addPlayer();
@@ -245,11 +296,12 @@ loadAndPlaceTrees(150);
 loadMewtwo();
 render();
 
-// ======== Init ========
+
+// Inicializa renderer, escena, camaras, luces y pointer lock
 function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(new THREE.Color(0x87b2f9)); // cielo
+  renderer.setClearColor(new THREE.Color(0x87b2f9)); 
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputEncoding = THREE.sRGBEncoding;
@@ -257,25 +309,23 @@ function init() {
 
   scene = new THREE.Scene();
 
-  // Cámara principal (perspectiva)
+  
   const aspect = window.innerWidth / window.innerHeight;
-  camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(baseFov, aspect, 0.1, 1000);
   camera.layers.enable(0);
   camera.layers.disable(1);
   camera.position.set(1, 1.5, 1);
 
-  // Minimap (orto top-down)
-  const halfSize = R * 0.4; // zoom del minimapa
+  
+  const halfSize = R * 0.4;
   cameraTop = new THREE.OrthographicCamera(-halfSize, halfSize, halfSize, -halfSize, 0.1, 500);
-  cameraTop.up.set(0, 0, 1); // norte fijo (Z hacia arriba en pantalla)
+  cameraTop.up.set(0, 0, 1);
   cameraTop.layers.enable(0);
   cameraTop.layers.enable(1);
   cameraTop.position.set(p_pos.x, 60, p_pos.z);
   cameraTop.lookAt(p_pos.x, 0, p_pos.z);
-  camera.fov = baseFov;
-  camera.updateProjectionMatrix();
 
-  // Luces
+  
   const dir = new THREE.DirectionalLight(0xffffff, 1.1);
   dir.position.set(15, 25, 10);
   dir.castShadow = true;
@@ -287,12 +337,12 @@ function init() {
 
   window.addEventListener('resize', updateAspectRatio);
 
-  // Al hacer clic en el canvas, pedir captura del cursor
+  
   renderer.domElement.addEventListener('click', (e) => {
     if (document.pointerLockElement !== renderer.domElement) {
       renderer.domElement.requestPointerLock();
     } else if (e.button === 0) {
-      // Botón izquierdo del ratón
+      
       if (!sprint && shootCooldown <= 0) {
         shoot();
         timer_pass = 2;
@@ -300,93 +350,98 @@ function init() {
     }
   });
 
-  // Escuchar los cambios en el pointer lock
   document.addEventListener('pointerlockchange', () => {
-    const pl = document.pointerLockElement === renderer.domElement;
-    if (pl) {
+    const locked = document.pointerLockElement === renderer.domElement;
+    if (locked) {
       document.addEventListener('mousemove', onMouseMove);
     } else {
       document.removeEventListener('mousemove', onMouseMove);
     }
   });
 
+  
   stats = new Stats();
   stats.dom.style.position = 'absolute';
-    stats.dom.style.bottom = '10px';
-    stats.dom.style.right = '10px';
-    stats.dom.style.top = 'auto';
-    stats.dom.style.left = 'auto';
-    document.body.appendChild(stats.dom);
+  stats.dom.style.bottom = '10px';
+  stats.dom.style.right = '10px';
+  stats.dom.style.top = 'auto';
+  stats.dom.style.left = 'auto';
+  document.body.appendChild(stats.dom);
 }
 
+// Mouse look: actualiza yaw y pitch
 function onMouseMove(event) {
   const movementX = event.movementX || 0;
   const movementY = event.movementY || 0;
 
-  const sensitivity = 0.002;
+  const sensitivity = 0.002; 
 
-  angulo -= movementX * sensitivity;                  // yaw
-  pitch  = THREE.MathUtils.clamp(                     // pitch
-            pitch - movementY * sensitivity,
-            -maxPitch, +maxPitch
-          );
+  angulo -= movementX * sensitivity;                  
+  pitch = clamp(pitch - movementY * sensitivity, -maxPitch, +maxPitch); 
 }
 
+// Ajuste de viewport y proyeccion en resize
 function updateAspectRatio() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
 }
 
-// ======== Terreno + agua ========
+
+// Genera malla de terreno, colores por altura y plano de agua
 function loadTerrain() {
   const geometry = new THREE.BufferGeometry();
 
   const numVertices = (segments + 1) * (segments + 1);
   const positions = new Float32Array(numVertices * 3);
-  const colors    = new Float32Array(numVertices * 3);
-  const indices   = [];
+  const colors = new Float32Array(numVertices * 3);
+  const indices = [];
 
   let idx = 0;
-  let minY = Infinity, maxY = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
 
-  // Genero posiciones y almaceno alturas
-  const zVals = new Float32Array(numVertices);
+  
+  const yVals = new Float32Array(numVertices);
 
   for (let i = 0; i <= segments; i++) {
-    const z = ((i / segments) * 2 - 1) * R; // eje Z del mundo
+    const z = ((i / segments) * 2 - 1) * R;
     for (let j = 0; j <= segments; j++) {
       const x = ((j / segments) * 2 - 1) * R;
-      const y = heightFunc(x, z); // altura en Y
+      const y = heightFunc(x, z);
 
       const base = (i * (segments + 1) + j);
-      zVals[base] = y;
+      yVals[base] = y;
 
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+      if (y < minY) {
+        minY = y;
+      }
+      if (y > maxY) {
+        maxY = y;
+      }
 
-      positions[idx]   = x;
-      positions[idx+1] = y;   // Y = altura
-      positions[idx+2] = z;
+      positions[idx] = x;
+      positions[idx + 1] = y;
+      positions[idx + 2] = z;
       idx += 3;
     }
   }
 
-  // Colores por altura
-  const colorLow  = new THREE.Color(0x4caf50); // verde
-  const colorHigh = new THREE.Color(0x8d6e63); // marrón
+  
+  const colorLow = new THREE.Color(0x4caf50);
+  const colorHigh = new THREE.Color(0x8d6e63);
   idx = 0;
   for (let v = 0; v < numVertices; v++) {
-    const y = zVals[v];
+    const y = yVals[v];
     const t = (y - minY) / Math.max(1e-6, (maxY - minY));
     const c = colorLow.clone().lerp(colorHigh, t);
-    colors[idx]   = c.r;
-    colors[idx+1] = c.g;
-    colors[idx+2] = c.b;
+    colors[idx] = c.r;
+    colors[idx + 1] = c.g;
+    colors[idx + 2] = c.b;
     idx += 3;
   }
 
-  // Índices (triángulos)
+  
   for (let i = 0; i < segments; i++) {
     for (let j = 0; j < segments; j++) {
       const a = i * (segments + 1) + j;
@@ -398,31 +453,25 @@ function loadTerrain() {
   }
 
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  const surface  = new THREE.Mesh(geometry, material);
+  const surface = new THREE.Mesh(geometry, material);
   surface.receiveShadow = true;
   surface.castShadow = false;
   scene.add(surface);
 
-  // Agua (nivel Y=0)
+  
   const waterGeometry = new THREE.PlaneGeometry(2 * R, 2 * R, 1, 1);
-  const waterMaterial = new THREE.MeshPhongMaterial({
-    color: 0x3366cc,
-    transparent: true,
-    opacity: 0.6,
-    side: THREE.DoubleSide
-  });
+  const waterMaterial = new THREE.MeshPhongMaterial({ color: 0x3366cc, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
   const water = new THREE.Mesh(waterGeometry, waterMaterial);
   water.rotation.x = -Math.PI / 2;
-  water.position.y = 0.02; // un pelín sobre 0 para evitar z-fighting
-  water.receiveShadow = false;
+  water.position.y = 0.02; 
   scene.add(water);
 
-  // --- Retícula centrada en pantalla ---
+  
   const cross = document.createElement('div');
   cross.id = 'reticle';
   Object.assign(cross.style, {
@@ -440,49 +489,45 @@ function loadTerrain() {
     zIndex: '9999'
   });
   document.body.appendChild(cross);
-
 }
 
+
+// Carga modelo del jugador y prepara animaciones
 function addPlayer() {
   const loader = new THREE.FBXLoader();
-  loader.load('models/charizard/Charizard.fbx', function (fbx) {
 
+  loader.load('models/charizard/Charizard.fbx', (fbx) => {
     player = fbx;
     scene.add(player);
     fbx.position.set(0, 2, 0);
 
-    // --- Normalizar altura con 2 pasadas y apoyar en el suelo ---
+    
     normalizeAndFloor(fbx, CHAR_TARGET_HEIGHT);
 
     mixer = new THREE.AnimationMixer(fbx);
 
-    // --- Mantener materiales del FBX (colores/texturas) y activar skinning ---
+    
     fbx.traverse((n) => {
+      
+      if (n.isLight || n.isCamera) {
+        if (n.parent) n.parent.remove(n);
+        return;
+      }
       if (n.isMesh) {
         n.castShadow = true;
         n.receiveShadow = true;
-        n.material.transparent = false;
-        n.material.opacity = 1.0;
-        if (n.isLight || n.isCamera) {
-          n.parent && n.parent.remove(n);
-          return;
-        }
-
         const mats = Array.isArray(n.material) ? n.material : [n.material];
-        mats.forEach(m => {
+        mats.forEach((m) => {
           if (!m) return;
           if (m.map) m.map.encoding = THREE.sRGBEncoding;
-          if (n.geometry && n.geometry.attributes && n.geometry.attributes.color) {
-            m.vertexColors = true;
-          }
+          if (n.geometry && n.geometry.attributes && n.geometry.attributes.color) m.vertexColors = true;
           m.skinning = !!n.isSkinnedMesh;
           m.needsUpdate = true;
           m.side = THREE.FrontSide;
           m.transparent = false;
           m.depthWrite = true;
         });
-
-        n.frustumCulled = false; // opcional durante pruebas
+        n.frustumCulled = false;
       }
     });
 
@@ -491,26 +536,26 @@ function addPlayer() {
     player.position.set(p_pos.x, p_pos.y - playerRadius, p_pos.z);
     player.rotation.y = angulo;
 
-    // --- Animaciones (mismo patrón que tu compa) ---
+    
     const CHAR_ANIMS = [
-      { path: 'models/charizard/Idle.fbx',                  name: 'idle' },
-      { path: 'models/charizard/Walking.fbx',               name: 'run' },
-      { path: 'models/charizard/Yelling Out.fbx',           name: 'pass', once: true },
-      { path: 'models/charizard/Jumping.fbx',               name: 'jump', once: true },
-      { path: 'models/charizard/Walking Backwards.fbx',     name: 'back' }
+      { path: 'models/charizard/Idle.fbx', name: 'idle' },
+      { path: 'models/charizard/Walking.fbx', name: 'run' },
+      { path: 'models/charizard/Yelling Out.fbx', name: 'pass', once: true },
+      { path: 'models/charizard/Jumping.fbx', name: 'jump', once: true },
+      { path: 'models/charizard/Walking Backwards.fbx', name: 'back' }
     ];
 
-    actions = {}; animationNames = [];
+    actions = {};
+    animationNames = [];
     animationNames[A_IDLE] = 'idle';
-    animationNames[A_RUN]  = 'run';
+    animationNames[A_RUN] = 'run';
     animationNames[A_PASS] = 'pass';
     animationNames[A_JUMP] = 'jump';
     animationNames[A_BACKWARDS] = 'back';
 
     let loadedAnimations = 0;
-
     CHAR_ANIMS.forEach((animInfo) => {
-      loader.load(animInfo.path, function (animData) {
+      loader.load(animInfo.path, (animData) => {
         if (animData.animations && animData.animations.length > 0) {
           const action = mixer.clipAction(animData.animations[0]);
           if (animInfo.once) {
@@ -521,26 +566,28 @@ function addPlayer() {
         }
         loadedAnimations++;
         if (loadedAnimations === CHAR_ANIMS.length) {
-          // Cuando estén todas, arrancamos en idle
           switchCharAnimation('idle');
         }
-      }, undefined, function() {
+      }, undefined, () => {
         loadedAnimations++;
       });
     });
 
-    console.log('✅ Charizard cargado con patrones de anim del compañero.');
-  },
-  undefined,
-  (err) => console.error('❌ Error cargando Charizard.fbx', err));
-
+    console.log('✅ Charizard cargado (jugador listo).');
+  }, undefined, (err) => {
+    console.error('❌ Error cargando Charizard.fbx', err);
+  });
 }
 
 function switchCharAnimation(newName) {
   const newAction = actions[newName];
-  if (!newAction) return;
+  if (!newAction) {
+    return;
+  }
   if (currentCharAction !== newAction) {
-    if (currentCharAction) currentCharAction.fadeOut(0.2);
+    if (currentCharAction) {
+      currentCharAction.fadeOut(0.2);
+    }
     newAction.reset();
     newAction.fadeIn(0.2);
     newAction.play();
@@ -548,63 +595,80 @@ function switchCharAnimation(newName) {
   }
 }
 
+function changeCharAnimation(index) {
+  const name = animationNames[index];
+  if (name) {
+    switchCharAnimation(name);
+  }
+}
+
+// Elimina pistas .scale de un clip de animacion problematico
 function stripScaleTracks(clip) {
-  const filtered = clip.tracks.filter(t => !t.name.endsWith('.scale'));
+  
+  const filtered = clip.tracks.filter((t) => !t.name.endsWith('.scale'));
   return new THREE.AnimationClip(clip.name + '_noScale', clip.duration, filtered);
 }
 
-function wrapAndNormalize(fbx, targetH) {
-  // Limpia luces/cámaras del FBX
-  fbx.traverse(n => { if (n.isLight || n.isCamera) n.parent && n.parent.remove(n); });
+// Normaliza altura del modelo a targetH y apoya en y=0
+function normalizeAndFloor(obj, targetH) {
+  
+  obj.updateMatrixWorld(true);
 
-  // Calcula bbox del modelo *sin* escalar huesos
-  fbx.updateMatrixWorld(true);
-  const box  = new THREE.Box3().setFromObject(fbx);
-  const size = new THREE.Vector3(); box.getSize(size);
-  const center = box.getCenter(new THREE.Vector3());
+  const box1 = new THREE.Box3().setFromObject(obj);
+  const size1 = new THREE.Vector3();
+  box1.getSize(size1);
+  const s1 = targetH / Math.max(size1.y, 1e-6);
+  obj.scale.multiplyScalar(s1);
+  obj.updateMatrixWorld(true);
 
-  // Crea contenedor y aplícale escala global
-  const container = new THREE.Group();
-  const s = targetH / Math.max(size.y, 1e-6);
-  container.scale.setScalar(s);
+  const box2 = new THREE.Box3().setFromObject(obj);
+  const size2 = new THREE.Vector3();
+  box2.getSize(size2);
+  const s2 = targetH / Math.max(size2.y, 1e-6);
+  obj.scale.multiplyScalar(s2);
+  obj.updateMatrixWorld(true);
 
-  // Reposiciona el FBX para que los pies queden en y=0 dentro del contenedor
-  fbx.position.sub(new THREE.Vector3(center.x, box.min.y, center.z));
-  fbx.name = 'MewtwoAnimatedRoot';
-  container.add(fbx);
-  return container;
+  const box3 = new THREE.Box3().setFromObject(obj);
+  const c = box3.getCenter(new THREE.Vector3());
+  obj.position.sub(new THREE.Vector3(c.x, box3.min.y, c.z));
 }
 
+
+// Carga prefab de Mewtwo y clips de animacion
 function loadMewtwo() {
   const loader = new THREE.FBXLoader();
-  loadedCount = 0;
 
-  // Cargar modelo base
-  loader.load('models/mewtwo/mewtwo.fbx', function (fbx) {
+  
+  loader.load('models/mewtwo/mewtwo.fbx', (fbx) => {
     mewtwoPrefab = fbx;
     normalizeAndFloor(fbx, ENEMY_TARGET_HEIGHT);
 
     mewtwoPrefab.traverse((n) => {
-      if (n.isLight || n.isCamera) n.parent && n.parent.remove(n);
+      if (n.isLight || n.isCamera) {
+        if (n.parent) {
+          n.parent.remove(n);
+        }
+      }
       if (n.isMesh) {
         n.castShadow = true;
         n.receiveShadow = true;
         const mats = Array.isArray(n.material) ? n.material : [n.material];
-        mats.forEach(m => {
-          if (m.map) m.map.encoding = THREE.sRGBEncoding;
-          m.skinning = true;
-          m.needsUpdate = true;
-          m.side = THREE.FrontSide;
-          m.transparent = false;
-          m.depthWrite = true;
+        mats.forEach((m) => {
+          if (m) {
+            m.skinning = true;
+            m.needsUpdate = true;
+          }
         });
         n.frustumCulled = false;
       }
     });
-    checkIfMewtwoIsReady();
-  }, undefined, (e) => console.error('❌ Error mewtwo.fbx', e));
 
-  // Cargar animaciones como CLIPS (no acciones aún)
+    checkIfMewtwoIsReady();
+  }, undefined, (e) => {
+    console.error('❌ Error mewtwo.fbx', e);
+  });
+
+  
   const animations = [
     ['models/mewtwo/Idle.fbx', E_IDLE],
     ['models/mewtwo/Walking.fbx', E_WALK],
@@ -614,229 +678,231 @@ function loadMewtwo() {
   animations.forEach(([animFile, index]) => {
     loader.load(animFile, (animData) => {
       if (animData.animations && animData.animations.length) {
-        const clip = animData.animations[0];
+        const clipNoScale = stripScaleTracks(animData.animations[0]);
         const name = animFile.split('/').pop().split('.').slice(0, -1).join('.');
-        const clipNoScale = stripScaleTracks(clip);
-        e_actions[name] = clipNoScale;       // guardamos CLIP por nombre
-        e_animationNames[index] = name;      // mapeo de índice -> nombre de clip
-        console.log(`✅ Mewtwo animación ${name} cargada.`);
+        e_actions[name] = clipNoScale;      
+        e_animationNames[index] = name;     
+        console.log(`✅ Mewtwo animacion ${name} cargada.`);
       } else {
-        console.warn('⚠️ Sin clips de animación en', animFile);
+        console.warn('⚠️ Sin clips de animacion en', animFile);
       }
-      loadedCount++;
       checkIfMewtwoIsReady();
-    }, undefined, (e) => console.error('❌ Error mewtwo.anim', e));
+    }, undefined, (e) => {
+      console.error('❌ Error mewtwo.anim', e);
+    });
   });
 }
 
+// Verifica si modelo y clip clave estan listos para spawnear
 function checkIfMewtwoIsReady() {
   const walkReady = !!e_actions[e_animationNames[E_WALK]];
   if (mewtwoPrefab && !mewtwoReady && walkReady) {
     mewtwoReady = true;
-    console.log('✅ Mewtwo listo. Lanzando primera oleada.');
-    spawnEnemies(waveNumber++);
+    console.log('✅ Mewtwo listo. Lanzo la primera oleada.');
+    spawnEnemies(waveNumber);
+    waveNumber += 1;
     enemySpawnTimer = 0;
   }
 }
 
-// Re‐escala en 2 pasadas para garantizar altura exacta y apoya en y=0
-function normalizeAndFloor(obj, targetH) {
-  obj.updateMatrixWorld(true);
-  let box = new THREE.Box3().setFromObject(obj);
-  let size = new THREE.Vector3(); box.getSize(size);
 
-  // 1ª pasada
-  let s = targetH / Math.max(size.y, 1e-6);
-  obj.scale.multiplyScalar(s);
-  obj.updateMatrixWorld(true);
-
-  // 2ª pasada (corrige errores por jerarquía/skin)
-  box.setFromObject(obj); box.getSize(size);
-  const s2 = targetH / Math.max(size.y, 1e-6);
-  obj.scale.multiplyScalar(s2);
-  obj.updateMatrixWorld(true);
-
-  // Apoyar pies
-  box.setFromObject(obj);
-  const c = box.getCenter(new THREE.Vector3());
-  obj.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
-}
-
-
-function changeCharAnimation(index) {
-    const name = animationNames[index];
-    if (!name) return;
-    switchCharAnimation(name);
-    currentCharAnimationIndex = index;
-}
-
+// Crea marcador para el minimapa (triangulo sobre XZ)
 function addMiniMarker() {
-  // Triángulo isósceles apuntando +Z en su espacio local
-  const w = 4.0;   // semi-ancho de la base
-  const h = 4.0;   // altura
+  
+  const w = 4.0;
+  const h = 4.0;
+
   const shape = new THREE.Shape();
-  shape.moveTo(0,  h);
+  shape.moveTo(0, h);
   shape.lineTo(-w, -h);
-  shape.lineTo( w, -h);
-  shape.lineTo(0,  h);
+  shape.lineTo(w, -h);
+  shape.lineTo(0, h);
 
   const geom = new THREE.ShapeGeometry(shape);
-  // Ponerlo plano sobre XZ (Y hacia arriba en el mundo)
-  geom.rotateX(Math.PI / 2);
+  geom.rotateX(Math.PI / 2); 
 
   const mat = new THREE.MeshBasicMaterial({
     color: 0xff5533,
     side: THREE.DoubleSide,
-    depthTest: false,   // para que “flote” sobre el terreno/agua en el minimapa
-    depthWrite: false,
+    depthTest: false,
+    depthWrite: false
   });
 
   miniMarker = new THREE.Mesh(geom, mat);
-  miniMarker.renderOrder = 999; // asegurar que se dibuja encima
-  miniMarker.layers.set(1);     // <- SOLO capa de overlay
+  miniMarker.renderOrder = 999; 
+  miniMarker.layers.set(1);     
 
-  // Posición inicial
   miniMarker.position.set(p_pos.x, heightFunc(p_pos.x, p_pos.z) + 0.03, p_pos.z);
   scene.add(miniMarker);
 }
 
+// Aproxima la pendiente local via diferencias finitas
 function approxSlope(x, z) {
-  // pendiente local aproximada
+  
   const e = 0.8;
-  const h  = heightFunc(x, z);
+  const h = heightFunc(x, z);
   const hx = heightFunc(x + e, z);
   const hz = heightFunc(x, z + e);
-  const dx = hx - h, dz = hz - h;
+  const dx = hx - h;
+  const dz = hz - h;
   return Math.hypot(dx, dz) / e;
 }
 
+// Punto aleatorio dentro de margenes del mapa
 function randomXZ() {
+  
   const margin = 8;
   const x = THREE.MathUtils.randFloat(-R + margin, R - margin);
   const z = THREE.MathUtils.randFloat(-R + margin, R - margin);
   return { x, z };
 }
 
+
+// Instancia arboles y registra colisionadores cilindricos
 function loadAndPlaceTrees(count = 20) {
   const loader = new THREE.GLTFLoader();
-  // El path es relativo al HTML que carga el script:
   loader.setPath('models/');
-  loader.load(
-    'arbol.gltf',
-    (gltf) => {
-      treePrefab = gltf.scene;
-      treePrefab.traverse((n) => {
-        if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }
+  loader.load('arbol.gltf', (gltf) => {
+    treePrefab = gltf.scene;
+    treePrefab.traverse((n) => {
+      if (n.isMesh) {
+        n.castShadow = true;
+        n.receiveShadow = true;
+      }
+    });
+
+    treesGroup = new THREE.Group();
+    treesGroup.name = 'Trees';
+    scene.add(treesGroup);
+
+    if (DEBUG_COLLIDERS) {
+      collidersGroup = new THREE.Group();
+      collidersGroup.name = 'TreeCollidersDebug';
+      scene.add(collidersGroup);
+    }
+
+    let placed = 0;
+    let tries = 0;
+    const maxTries = count * 30;
+
+    while (placed < count && tries < maxTries) {
+      tries += 1;
+      const { x, z } = randomXZ();
+      const y = heightFunc(x, z);
+
+      if (y <= 0.05) {
+        continue; 
+      }
+      if (approxSlope(x, z) > 0.6) {
+        continue; 
+      }
+
+      const dx0 = x - p_pos.x;
+      const dz0 = z - p_pos.z;
+      if (Math.hypot(dx0, dz0) < 6) {
+        continue; 
+      }
+
+      const t = treePrefab.clone(true);
+      t.position.set(x, y, z);
+      t.rotation.y = Math.random() * Math.PI * 2;
+      t.scale.setScalar(THREE.MathUtils.randFloat(0.20, 0.5));
+
+      treesGroup.add(t);
+
+      
+      t.updateWorldMatrix(true, true);
+      const bbox = new THREE.Box3().setFromObject(t);
+      const height = bbox.max.y - bbox.min.y;
+      const radius = Math.max(bbox.max.x - bbox.min.x, bbox.max.z - bbox.min.z) * 0.5;
+      const center = new THREE.Vector3();
+      bbox.getCenter(center);
+
+      treeColliders.push({
+        cx: center.x,
+        cz: center.z,
+        yMin: bbox.min.y,
+        yMax: bbox.max.y,
+        r: radius
       });
 
-      treesGroup = new THREE.Group();
-      treesGroup.name = 'Trees';
-      scene.add(treesGroup);
-
       if (DEBUG_COLLIDERS) {
-        collidersGroup = new THREE.Group();
-        collidersGroup.name = 'TreeCollidersDebug';
-        scene.add(collidersGroup);
+        const cylGeo = new THREE.CylinderGeometry(radius, radius, height, 16);
+        const cylMat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.3, depthWrite: false });
+        const cyl = new THREE.Mesh(cylGeo, cylMat);
+        cyl.position.set(center.x, bbox.min.y + height * 0.5, center.z);
+        collidersGroup.add(cyl);
       }
 
-      let placed = 0, tries = 0, maxTries = count * 30;
-      while (placed < count && tries < maxTries) {
-        tries++;
-        const { x, z } = randomXZ();
-        const y = heightFunc(x, z);
-        if (y <= 0.05) continue;
-        if (approxSlope(x, z) > 0.6) continue;
+      placed += 1;
+    }
 
-        const dx0 = x - p_pos.x, dz0 = z - p_pos.z;
-        if (Math.hypot(dx0, dz0) < 6) continue;
-
-        const t = treePrefab.clone(true);
-        t.position.set(x, y, z);
-        t.rotation.y = Math.random() * Math.PI * 2;
-        const s = THREE.MathUtils.randFloat(0.20, 0.5);
-        t.scale.setScalar(s);
-
-        treesGroup.add(t);
-
-        // --- Bounding cylinder (una vez, al cargar) ---
-        t.updateWorldMatrix(true, true);
-        const bbox = new THREE.Box3().setFromObject(t);
-        const height = bbox.max.y - bbox.min.y;
-        const radius = Math.max(bbox.max.x - bbox.min.x, bbox.max.z - bbox.min.z) * 0.5;
-        const center = new THREE.Vector3();
-        bbox.getCenter(center);
-
-        treeColliders.push({
-          cx: center.x, cz: center.z,
-          yMin: bbox.min.y, yMax: bbox.max.y,
-          r: radius
-        });
-
-        if (DEBUG_COLLIDERS) {
-          const cylGeo = new THREE.CylinderGeometry(radius, radius, height, 16);
-          const cylMat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.3, depthWrite: false });
-          const cyl = new THREE.Mesh(cylGeo, cylMat);
-          cyl.position.set(center.x, bbox.min.y + height * 0.5, center.z);
-          collidersGroup.add(cyl);
-        }
-
-        placed++;
-      }
-      console.log(`Colocados ${placed} árboles y ${treeColliders.length} colliders`);
-
-          },
-          undefined,
-          (err) => console.error('Error cargando arbol.gltf', err)
-        );
+    console.log(`🌳 Colocados ${placed} arboles y ${treeColliders.length} colliders`);
+  }, undefined, (err) => {
+    console.error('Error cargando arbol.gltf', err);
+  });
 }
 
+// Resuelve penetracion jugador-cilindro via empuje radial
 function resolveTreeCollisions(nextX, nextZ, nextY) {
-  let nx = nextX, nz = nextZ;
+  
+  let nx = nextX;
+  let nz = nextZ;
 
   for (const c of treeColliders) {
-    // chequeo vertical: esfera del jugador dentro del rango del cilindro
-    if (nextY + playerRadius < c.yMin || nextY - playerRadius > c.yMax) continue;
+    if (nextY + playerRadius < c.yMin || nextY - playerRadius > c.yMax) {
+      continue;
+    }
 
-    const dx = nx - c.cx, dz = nz - c.cz;
-    const dist2 = dx*dx + dz*dz;
+    const dx = nx - c.cx;
+    const dz = nz - c.cz;
     const minDist = c.r + playerRadius;
-    if (dist2 < minDist*minDist) {
+    const dist2 = dx * dx + dz * dz;
+
+    if (dist2 < minDist * minDist) {
       const dist = Math.sqrt(dist2) || 1e-6;
-      const push = (minDist - dist) + 1e-3; // epsilon
+      const push = (minDist - dist) + 1e-3; 
       nx += (dx / dist) * push;
       nz += (dz / dist) * push;
     }
   }
+
   return { x: nx, z: nz };
 }
 
+
+// Dispara una bola con GLTF, luz puntual y fisica simple
 function shoot() {
-  if (shootCooldown > 0 || sprint) return;
+  if (shootCooldown > 0 || sprint) {
+    return; 
+  }
 
   let dir = new THREE.Vector3();
   let origin;
 
   if (firstPerson) {
+    
     camera.getWorldDirection(dir).normalize();
     origin = camera.position.clone();
   } else {
+    
     dir.set(Math.sin(angulo), 0, Math.cos(angulo)).normalize();
     const forward = dir.clone();
-    origin = p_pos.clone()
-      .addScaledVector(forward, playerRadius + 0.35)
-      .setY(p_pos.y + 0.28);
+    origin = p_pos.clone();
+    origin.addScaledVector(forward, playerRadius + 0.35);
+    origin.setY(p_pos.y + 0.28);
 
     const groundAtOrigin = heightFunc(origin.x, origin.z);
     origin.y = Math.max(origin.y, groundAtOrigin + BULLET_RADIUS + 0.02);
   }
 
-  // --- Carga del modelo Fireball (sin luz ni emisivo) ---
+  
   const loader = new THREE.GLTFLoader();
-  const path = 'models/fireball_simple.gltf';
-  loader.load(path, (gltf) => {
+  loader.load('models/fireball_simple.gltf', (gltf) => {
     const fireball = gltf.scene;
     fireball.scale.setScalar(0.01);
     fireball.position.copy(origin);
+
     fireball.traverse((child) => {
       if (child.isMesh) {
         child.material = new THREE.MeshStandardMaterial({
@@ -849,11 +915,13 @@ function shoot() {
         child.receiveShadow = false;
       }
     });
+
     const light = new THREE.PointLight(0xff6600, 1.5, 4, 2);
-    light.position.set(0, 0, 0); // se moverá con la bola
+    light.position.set(0, 0, 0);
     fireball.add(light);
 
     scene.add(fireball);
+
     bullets.push({
       mesh: fireball,
       vel: dir.clone().multiplyScalar(BULLET_SPEED),
@@ -861,111 +929,148 @@ function shoot() {
     });
   });
 
-  shootCooldown = 0.8;
+  shootCooldown = 0.8; 
 }
 
-
-function updateProjectiles(dt) {
-  for (let i = bullets.length - 1; i >= 0; i--) {
-    const b = bullets[i];
-
-    // Integración
-    b.mesh.position.addScaledVector(b.vel, dt);
-    b.life -= dt;
-
-    const pos = b.mesh.position;
-    const groundY = heightFunc(pos.x, pos.z) + BULLET_RADIUS + 0.02;
-
-    // --- Colisión con terreno ---
-    if (pos.y <= groundY) {
-      removeBullet(i);
-      continue;
-    }
-
-    // --- Colisión con árboles (cilindros) ---
-    if (bulletHitsTree(pos)) {
-      removeBullet(i);
-      continue;
-    }
-
-    // --- Límites del mapa / vida ---
-    if (b.life <= 0 || Math.abs(pos.x) > R+5 || Math.abs(pos.z) > R+5 || pos.y > 200) {
-      removeBullet(i);
-      continue;
-    }
-    const dir = b.vel.clone().normalize();
-    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
-    b.mesh.quaternion.copy(quat);
-
-    // --- Colisión con enemigos ---
-    const enemyHitIndex = enemies.findIndex(e => {
-      return b.mesh.position.distanceTo(e.mesh.position) < (BULLET_RADIUS + 2);
-    });
-    if (enemyHitIndex >= 0) {
-      const enemy = enemies[enemyHitIndex];
-
-      if (!enemy.dead) {
-        enemy.hp -= 1;
-        if (enemy.hp <= 0) {
-          killEnemy(enemy, enemyHitIndex);
-          addScore();
-        }
-        removeBullet(i);
-      }
-      continue;
-    }
-  }
-}
-
+// Test de impacto de proyectil con arboles
 function bulletHitsTree(pos) {
+  
   for (const c of treeColliders) {
-    if (pos.y < c.yMin || pos.y > c.yMax) continue;
-    const dx = pos.x - c.cx, dz = pos.z - c.cz;
-    if (dx*dx + dz*dz <= (c.r + BULLET_RADIUS)* (c.r + BULLET_RADIUS)) {
+    if (pos.y < c.yMin || pos.y > c.yMax) {
+      continue;
+    }
+
+    const dx = pos.x - c.cx;
+    const dz = pos.z - c.cz;
+    const rr = (c.r + BULLET_RADIUS);
+    if (dx * dx + dz * dz <= rr * rr) {
       return true;
     }
   }
   return false;
 }
 
-
+// Elimina proyectil y libera recursos
 function removeBullet(index) {
   const b = bullets[index];
-  if (!b) return;
+  if (!b) {
+    return;
+  }
+
+  
+  b.mesh.traverse((n) => {
+    if (n.isMesh) {
+      if (n.geometry) {
+        n.geometry.dispose();
+      }
+      if (Array.isArray(n.material)) {
+        n.material.forEach((m) => m && m.dispose());
+      } else if (n.material) {
+        n.material.dispose();
+      }
+    }
+    if (n.isLight && n.dispose) {
+      n.dispose();
+    }
+  });
+
   scene.remove(b.mesh);
-  if (b.mesh.geometry) b.mesh.geometry.dispose();
-  if (b.mesh.material) b.mesh.material.dispose();
   bullets.splice(index, 1);
 }
 
-function spawnEnemies(wave) { 
+// Integra proyectiles y gestiona colisiones y vida
+function updateProjectiles(dt) {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+
+    
+    b.mesh.position.addScaledVector(b.vel, dt);
+    b.life -= dt;
+
+    const pos = b.mesh.position;
+    const groundY = heightFunc(pos.x, pos.z) + BULLET_RADIUS + 0.02;
+
+    
+    if (pos.y <= groundY) {
+      removeBullet(i);
+      continue;
+    }
+
+    
+    if (bulletHitsTree(pos)) {
+      removeBullet(i);
+      continue;
+    }
+
+    
+    if (b.life <= 0 || Math.abs(pos.x) > R + 5 || Math.abs(pos.z) > R + 5 || pos.y > 200) {
+      removeBullet(i);
+      continue;
+    }
+
+    
+    const dir = b.vel.clone().normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+    b.mesh.quaternion.copy(quat);
+
+    
+    const hitIndex = enemies.findIndex((e) => {
+      return b.mesh.position.distanceTo(e.mesh.position) < (BULLET_RADIUS + 2);
+    });
+
+    if (hitIndex >= 0) {
+      const enemy = enemies[hitIndex];
+
+      if (!enemy.dead) {
+        enemy.hp -= 1;
+        if (enemy.hp <= 0) {
+          killEnemy(enemy, hitIndex);
+          addScore();
+        }
+        removeBullet(i);
+      }
+    }
+  }
+}
+
+
+// Crea enemigos para una oleada, con mixer y acciones
+function spawnEnemies(wave) {
   if (!mewtwoReady || !mewtwoPrefab) {
-    console.warn('⏳ Mewtwo aún no cargó; reintentará en la próxima oleada.');
+    console.warn('⏳ Mewtwo aun no cargo; reintento en la proxima ola.');
     return false;
   }
 
   for (let i = 0; i < ENEMIES_PER_WAVE + wave; i++) {
     const { x, z } = randomXZ();
-    const y = heightFunc(x, z) + 5.0; // empezar un poco arriba
+    const y = heightFunc(x, z) + 5.0; 
 
-    // Raíz del enemigo = Group (modelo + barra de vida)
+    
     const enemyRoot = new THREE.Group();
-    const model = THREE.SkeletonUtils.clone(mewtwoPrefab);
 
-    model.traverse(n => {
-      if (n.isMesh) { n.frustumCulled = false; n.castShadow = n.receiveShadow = true; }
+    const model = THREE.SkeletonUtils.clone(mewtwoPrefab);
+    model.traverse((n) => {
+      if (n.isMesh) {
+        n.frustumCulled = false;
+        n.castShadow = true;
+        n.receiveShadow = true;
+      }
       if (n.isSkinnedMesh) {
         const mats = Array.isArray(n.material) ? n.material : [n.material];
-        mats.forEach(m => { if (m) { m.skinning = true; m.needsUpdate = true; } });
+        mats.forEach((m) => {
+          if (m) {
+            m.skinning = true;
+            m.needsUpdate = true;
+          }
+        });
       }
     });
 
     const animRoot = model.getObjectByName('MewtwoAnimatedRoot') || model;
-
     model.position.set(0, 0, 0);
     enemyRoot.add(model);
 
-    // Barra de vida a una altura proporcional fija
+    
     const bar = new THREE.Mesh(
       new THREE.PlaneGeometry(0.8, 0.1),
       new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide })
@@ -973,31 +1078,27 @@ function spawnEnemies(wave) {
     bar.position.set(0, ENEMY_BAR_HEIGHT, 0);
     enemyRoot.add(bar);
 
-    // Colocar al terreno
-    enemyRoot.position.set(x, y, z);
-
+    
     let hitbox = null;
-
     if (DEBUG_ENEMY_HITBOX) {
-    const hitboxGeo = new THREE.CylinderGeometry(
-        ENEMY_HIT_RADIUS, ENEMY_HIT_RADIUS, ENEMY_TARGET_HEIGHT, 24
-    );
-    const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: false });
-    hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
-    hitbox.name = 'EnemyHitbox';
-    hitbox.frustumCulled = false;
-    hitbox.position.set(0, ENEMY_TARGET_HEIGHT * 0.5, 0);
-    enemyRoot.add(hitbox);
+      const hitboxGeo = new THREE.CylinderGeometry(ENEMY_HIT_RADIUS, ENEMY_HIT_RADIUS, ENEMY_TARGET_HEIGHT, 24);
+      const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: false });
+      hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
+      hitbox.name = 'EnemyHitbox';
+      hitbox.frustumCulled = false;
+      hitbox.position.set(0, ENEMY_TARGET_HEIGHT * 0.5, 0);
+      enemyRoot.add(hitbox);
     }
 
     scene.add(enemyRoot);
 
-    // Mixer propio + acciones por instancia (mismo patrón que compañero)
+    
     const mixer = new THREE.AnimationMixer(animRoot);
     const enemyActions = {};
+
     const idleClip = e_actions[e_animationNames[E_IDLE]];
     const walkClip = e_actions[e_animationNames[E_WALK]];
-    const dieClip  = e_actions[e_animationNames[E_DIE]];
+    const dieClip = e_actions[e_animationNames[E_DIE]];
 
     if (idleClip) {
       enemyActions.idle = mixer.clipAction(idleClip).setLoop(THREE.LoopRepeat, Infinity);
@@ -1014,14 +1115,23 @@ function spawnEnemies(wave) {
     let currentAction = null;
     const play = (name) => {
       const next = enemyActions[name];
-      if (!next) return;
-      if (currentAction && currentAction !== next) currentAction.fadeOut(0.2);
-      next.reset().fadeIn(0.2).play();
+      if (!next) {
+        return;
+      }
+      if (currentAction && currentAction !== next) {
+        currentAction.fadeOut(0.2);
+      }
+      next.reset();
+      next.fadeIn(0.2);
+      next.play();
       currentAction = next;
     };
 
-    // Por defecto, caminan
-    if (enemyActions.walk) play('walk'); else if (enemyActions.idle) play('idle');
+    if (enemyActions.walk) {
+      play('walk');
+    } else if (enemyActions.idle) {
+      play('idle');
+    }
 
     enemies.push({
       mesh: enemyRoot,
@@ -1032,166 +1142,197 @@ function spawnEnemies(wave) {
       playAction: play,
       currentAction: currentAction,
       dead: false,
+      hitbox: hitbox,
       spinHitbox: false,
       spinSpeed: 6.0
     });
   }
 
-  console.log(`🌊 Oleada ${wave + 1} generada con ${ENEMIES_PER_WAVE + wave} Mewtwos.`);
+  console.log(`🌊 Oleada ${wave + 1} con ${ENEMIES_PER_WAVE + wave} Mewtwos.`);
   return true;
 }
 
+// Actualiza barra de vida del jugador
 function updateHealthBar() {
+  
   const pct = Math.max(0, playerHP / playerMaxHP);
   const bar = document.getElementById('health-bar');
   bar.style.width = `${pct * 100}%`;
   bar.style.backgroundColor = pct < 0.3 ? '#f33' : (pct < 0.6 ? '#ff0' : '#0f0');
 }
 
-function updateEnemies(dt) {
-  for (let i = enemies.length - 1; i >= 0; i--) {
-    const e = enemies[i];
-    e.mixer.update(dt);
-    if (e.dead) continue;
-    if (!e || !e.mesh) {
-      enemies.splice(i, 1); // eliminar enemigos corruptos
+// Resuelve colision enemigo-arbol con mismo algoritmo
+function resolveEnemyTreeCollisions(pos, radius = 0.3) {
+  
+  const result = pos.clone();
+
+  for (const c of treeColliders) {
+    if (result.y + radius < c.yMin || result.y - radius > c.yMax) {
       continue;
     }
 
-    const dir = new THREE.Vector3().subVectors(p_pos, e.mesh.position).setY(0).normalize();
-    const proposedPos = e.mesh.position.clone().addScaledVector(dir, ENEMY_SPEED * dt);
-    const corrected = resolveEnemyTreeCollisions(proposedPos);
-    e.mesh.position.set(corrected.x, e.mesh.position.y, corrected.z);
-
-
-    // Ajustar altura del enemigo al terreno
-    const groundY = heightFunc(e.mesh.position.x, e.mesh.position.z);
-    e.mesh.position.y = groundY;
-
-    // Actualiza barra de vida si existe
-    if (e.healthBar && e.healthBar.visible) {
-      e.healthBar.position.set(0, ENEMY_BAR_HEIGHT, 0);
-      e.healthBar.scale.x = Math.max(0.001, e.hp / ENEMY_HP);
-      e.healthBar.material.color.set(
-        e.hp <= 1 ? 0xff0000 : e.hp === 2 ? 0xffff00 : 0x00ff00
-      );
-      e.healthBar.lookAt(camera.position);
-    }
-
-    if (e.spinHitbox && e.hitbox) {
-        e.hitbox.rotation.xa += e.spinSpeed * dt;
-    }
-
-    // Chequeo colisión jugador
-    const dist = e.mesh.position.distanceTo(p_pos);
-    if (dist < playerRadius + 0.3) {
-      if (playerHurtCooldown <= 0) {
-        console.log("💥 El jugador fue tocado por un enemigo");
-        playerHP = Math.max(0, playerHP - 1);
-        updateHealthBar();
-        playerHurtCooldown = 1; // 1 segundo de invulnerabilidad
-      }
-    }
-  }
-}
-
-function killEnemy(e, index) {
-  if (e.dead) return;
-  e.dead = true;
-  if (e.actions && e.actions.die) {
-    if (e.currentAction) e.currentAction.fadeOut(0.15);
-    e.actions.die.reset().fadeIn(0.15).play();
-    e.currentAction = e.actions.die;
-  } else {
-    // Fallback por si algo falló: intentar con el clip directamente
-    const dieClip = e_actions[e_animationNames[E_DIE]];
-    if (dieClip) {
-      e.mixer.stopAllAction();
-      e.mixer.clipAction(dieClip).reset().play();
-    }
-  }
-  if (e.healthBar) { e.healthBar.visible = false; }
-  if (e.hitbox) { e.spinHitbox = true; }
-
-  setTimeout(() => {
-    scene.remove(e.mesh);
-    enemies.splice(index, 1);
-  }, 5000);
-}
-
-function resolveEnemyTreeCollisions(pos, radius = 0.3) {
-  const result = pos.clone();
-  for (const c of treeColliders) {
-    if (result.y + radius < c.yMin || result.y - radius > c.yMax) continue;
-
-    const dx = result.x - c.cx, dz = result.z - c.cz;
-    const dist2 = dx*dx + dz*dz;
+    const dx = result.x - c.cx;
+    const dz = result.z - c.cz;
     const minDist = c.r + radius;
+    const dist2 = dx * dx + dz * dz;
 
-    if (dist2 < minDist*minDist) {
+    if (dist2 < minDist * minDist) {
       const dist = Math.sqrt(dist2) || 1e-6;
       const push = (minDist - dist) + 1e-3;
       result.x += (dx / dist) * push;
       result.z += (dz / dist) * push;
     }
   }
+
   return result;
 }
 
+// Avanza IA simple: seguir jugador, ajustar altura y UI
+function updateEnemies(dt) {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
 
-// ======== Update =========
+    e.mixer.update(dt);
+
+    if (e.dead) {
+      continue;
+    }
+
+    if (!e || !e.mesh) {
+      enemies.splice(i, 1);
+      continue;
+    }
+
+    
+    const dir = new THREE.Vector3().subVectors(p_pos, e.mesh.position).setY(0).normalize();
+    const proposedPos = e.mesh.position.clone().addScaledVector(dir, ENEMY_SPEED * dt);
+    const corrected = resolveEnemyTreeCollisions(proposedPos);
+    e.mesh.position.set(corrected.x, e.mesh.position.y, corrected.z);
+
+    
+    const groundY = heightFunc(e.mesh.position.x, e.mesh.position.z);
+    e.mesh.position.y = groundY;
+
+    
+    if (e.healthBar && e.healthBar.visible) {
+      e.healthBar.position.set(0, ENEMY_BAR_HEIGHT, 0);
+      e.healthBar.scale.x = Math.max(0.001, e.hp / ENEMY_HP);
+      e.healthBar.material.color.set(e.hp <= 1 ? 0xff0000 : e.hp === 2 ? 0xffff00 : 0x00ff00);
+      e.healthBar.lookAt(camera.position);
+    }
+
+    
+    if (e.spinHitbox && e.hitbox) {
+      e.hitbox.rotation.y += e.spinSpeed * dt;
+    }
+
+    
+    const dist = e.mesh.position.distanceTo(p_pos);
+    if (dist < playerRadius + 0.3) {
+      if (playerHurtCooldown <= 0) {
+        console.log('💥 El jugador fue tocado por un enemigo');
+        playerHP = Math.max(0, playerHP - 1);
+        updateHealthBar();
+        playerHurtCooldown = 1; 
+      }
+    }
+  }
+}
+
+// Maneja muerte: animacion, ocultar barra y limpieza diferida
+function killEnemy(e, index) {
+  if (e.dead) {
+    return;
+  }
+
+  e.dead = true;
+
+  if (e.actions && e.actions.die) {
+    if (e.currentAction) {
+      e.currentAction.fadeOut(0.15);
+    }
+    e.actions.die.reset();
+    e.actions.die.fadeIn(0.15);
+    e.actions.die.play();
+    e.currentAction = e.actions.die;
+  } else {
+    
+    const dieClip = e_actions[e_animationNames[E_DIE]];
+    if (dieClip) {
+      e.mixer.stopAllAction();
+      e.mixer.clipAction(dieClip).reset().play();
+    }
+  }
+
+  if (e.healthBar) {
+    e.healthBar.visible = false;
+  }
+
+  if (e.hitbox) {
+    e.spinHitbox = true;
+  }
+
+  
+  setTimeout(() => {
+    scene.remove(e.mesh);
+    enemies.splice(index, 1);
+  }, 5000);
+}
+
+
+// Bucle de actualizacion: input, fisica, camaras, spawner
 function update(dt) {
-  // Dirección de mirada (en XZ)
+  
   const forward = new THREE.Vector3(Math.sin(angulo), 0, Math.cos(angulo));
-  const right   = new THREE.Vector3(forward.z, 0, -forward.x);
+  const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
+  
   angulo = THREE.MathUtils.euclideanModulo(angulo + Math.PI, Math.PI * 2) - Math.PI;
 
-  // Desplazamiento horizontal
-  const moving = (controls.moveForward || 
-                  controls.moveBackward ||
-                  controls.moveLeft ||
-                  controls.moveRight);
-   if (moving) {
-      const isBackward = controls.moveBackward && !controls.moveForward;
-      changeCharAnimation(isBackward ? A_BACKWARDS : A_RUN);
-   } else {
-      changeCharAnimation(A_IDLE);
-   }
+  
+  const moving = (
+    controls.moveForward ||
+    controls.moveBackward ||
+    controls.moveLeft ||
+    controls.moveRight
+  );
 
-  const effSpeed = controls.speed * ((sprint && moving) ? SPRINT_MUL : 1.0);
+  const isBackwardOnly = controls.moveBackward && !controls.moveForward;
+  const isSprinting = sprint && moving;
+  const effSpeed = controls.speed * (isSprinting ? 1.7 : 1.0);
 
-  // calcula intento de movimiento
   let move = new THREE.Vector3();
-  if (controls.moveForward)  move.addScaledVector(forward,  effSpeed);
-  if (controls.moveBackward) move.addScaledVector(forward, -effSpeed);
 
-  // desplazamiento lateral con A/D
-  if (controls.moveLeft) move.addScaledVector(right, effSpeed);
-  if (controls.moveRight) move.addScaledVector(right, -effSpeed);
+  if (controls.moveForward) {
+    move.addScaledVector(forward, effSpeed);
+  }
+  if (controls.moveBackward) {
+    move.addScaledVector(forward, -effSpeed);
+  }
+  if (controls.moveLeft) {
+    move.addScaledVector(right, effSpeed);
+  }
+  if (controls.moveRight) {
+    move.addScaledVector(right, -effSpeed);
+  }
 
-  // nuevo XZ propuesto
   let nextX = p_pos.x + move.x;
   let nextZ = p_pos.z + move.z;
 
-  // RESOLVER colisiones contra árboles (cilindros)
+  
   const solved = resolveTreeCollisions(nextX, nextZ, p_pos.y);
   p_pos.x = solved.x;
   p_pos.z = solved.z;
 
-  // Límites del mapa
-  p_pos.x = THREE.MathUtils.clamp(p_pos.x, -R + 0.1, R - 0.1);
-  p_pos.z = THREE.MathUtils.clamp(p_pos.z, -R + 0.1, R - 0.1);
+  
+  p_pos.x = clamp(p_pos.x, -R + 0.1, R - 0.1);
+  p_pos.z = clamp(p_pos.z, -R + 0.1, R - 0.1);
 
-
-  // ==== FÍSICA VERTICAL (salto/gravedad) ====
+  
   const groundY = heightFunc(p_pos.x, p_pos.z) + playerRadius;
-
-  // Integración simple
   vy += GRAVITY * dt;
   p_pos.y += vy * dt;
 
-  // Colisión con el suelo
   if (p_pos.y <= groundY) {
     p_pos.y = groundY;
     vy = 0;
@@ -1200,12 +1341,11 @@ function update(dt) {
     grounded = false;
   }
 
+  
   if (player) {
-    // Posición y orientación del modelo (el yaw ya lo tienes en 'angulo')
     player.position.set(p_pos.x, p_pos.y - playerRadius, p_pos.z);
     player.rotation.y = angulo;
 
-    // Máquina de estados de animación base
     if (mixer) {
       if (timer_pass > 0) {
         timer_pass -= dt;
@@ -1218,69 +1358,64 @@ function update(dt) {
         timer_jump -= dt;
         changeCharAnimation(A_JUMP);
       } else {
-        const isBackward = controls.moveBackward && !controls.moveForward;
-        changeCharAnimation(isBackward ? A_BACKWARDS : moving ? A_RUN : A_IDLE);
+        changeCharAnimation(isBackwardOnly ? A_BACKWARDS : (moving ? A_RUN : A_IDLE));
       }
     }
-
   }
 
-
+  
   if (miniMarker) {
-    // Altura pegada al suelo (no al centro del jugador)
     const yGround = heightFunc(p_pos.x, p_pos.z) + 0.03;
     miniMarker.position.set(p_pos.x, yGround, p_pos.z);
-
-    // Orientación: el triángulo fue modelado apuntando a +Z; yaw = angulo
     miniMarker.rotation.y = angulo;
   }
 
+  
+  const movingForFP = controls.moveForward || controls.moveBackward;
+  const sprintingFP = sprint && movingForFP;
 
-  // === CÁMARAS (tu bloque TPS actual, sin cambios) ===
   if (firstPerson) {
-    const movingFP = (controls.moveForward || controls.moveBackward);
-    const isSprinting = sprint && movingFP;
-
-    const targetEyeY = p_pos.y + (isSprinting ? 0.18 : 0.20);
+    const targetEyeY = p_pos.y + (sprintingFP ? 0.18 : 0.20);
     camY += (targetEyeY - camY) * Math.min(1, CAM_Y_SMOOTH * dt);
 
     const eye = new THREE.Vector3(p_pos.x, camY, p_pos.z);
     camera.position.copy(eye);
 
-    // vector forward con pitch
-    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
     const fwd = new THREE.Vector3(Math.sin(angulo) * cp, sp, Math.cos(angulo) * cp).normalize();
     const lookTarget = eye.clone().addScaledVector(fwd, FP_LOOK_DIST);
 
+    
     const worldUp = new THREE.Vector3(0, 1, 0);
-    const right = new THREE.Vector3().crossVectors(fwd, worldUp).normalize();
-    const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
-    const m = new THREE.Matrix4().makeBasis(right, up, fwd.clone().negate());
+    const rightVec = new THREE.Vector3().crossVectors(fwd, worldUp).normalize();
+    const up = new THREE.Vector3().crossVectors(rightVec, fwd).normalize();
+    const m = new THREE.Matrix4().makeBasis(rightVec, up, fwd.clone().negate());
     camera.quaternion.setFromRotationMatrix(m);
     camera.lookAt(lookTarget);
 
-    const targetFov = isSprinting ? sprintFov : baseFov;
-    camera.fov += (targetFov - camera.fov) * (isSprinting ? 0.18 : 0.12);
+    const targetFov = sprintingFP ? sprintFov : baseFov;
+    camera.fov += (targetFov - camera.fov) * (sprintingFP ? 0.18 : 0.12);
     camera.updateProjectionMatrix();
   } else {
-    // ========= TPS =========
-    const isMoving = (controls.moveForward || controls.moveBackward);
-    const isSprinting = sprint && isMoving;
-
+    
     const normalDist = 3.5;
     const sprintDist = 1.9;
 
-    const forward = new THREE.Vector3(Math.sin(angulo), 0, Math.cos(angulo));
-    const camOff = new THREE.Vector3(-Math.sin(angulo), 0.4, -Math.cos(angulo))
-                      .multiplyScalar(isSprinting ? sprintDist : normalDist);
+    const camOff = new THREE.Vector3(-Math.sin(angulo), 0.4, -Math.cos(angulo));
+    camOff.multiplyScalar(isSprinting ? sprintDist : normalDist);
 
     const lookAhead = isSprinting ? lookAheadSprint : lookAheadNormal;
-    const aimUp     = isSprinting ? aimUpSprint     : aimUpNormal;
+    const aimUp = isSprinting ? aimUpSprint : aimUpNormal;
 
-    const target = p_pos.clone().add(forward.clone().multiplyScalar(lookAhead));
+    const target = p_pos.clone();
+    const forwardVec = new THREE.Vector3(Math.sin(angulo), 0, Math.cos(angulo));
+    target.add(forwardVec.multiplyScalar(lookAhead));
     target.y += aimUp;
 
-    const desired = p_pos.clone().add(camOff);
+    const desired = p_pos.clone();
+    desired.add(camOff);
     desired.y = Math.max(desired.y, p_pos.y + 0.3);
 
     if (isSprinting) {
@@ -1288,7 +1423,7 @@ function update(dt) {
     } else {
       camera.position.copy(desired);
     }
-    
+
     camera.lookAt(target);
 
     const targetFov = isSprinting ? sprintFov : baseFov;
@@ -1296,49 +1431,53 @@ function update(dt) {
     camera.updateProjectionMatrix();
   }
 
+  
   updateProjectiles(dt);
   shootCooldown = Math.max(0, shootCooldown - dt);
 
-  // Minimap
+  
   cameraTop.position.set(p_pos.x, 30, p_pos.z);
   cameraTop.lookAt(p_pos.x, 0, p_pos.z);
 
+  
   playerHurtCooldown = Math.max(0, playerHurtCooldown - dt);
 
+  
   enemySpawnTimer += dt;
   if (mewtwoReady && (enemySpawnTimer >= ENEMY_SPAWN_INTERVAL)) {
     enemySpawnTimer = 0;
     if (spawnEnemies(waveNumber)) {
-      waveNumber++;
+      waveNumber += 1;
     }
-
   }
 
+  
   const reticle = document.getElementById('reticle');
-  const isMoving = (controls.moveForward || controls.moveBackward);
-  const isSprinting = sprint && isMoving;
   if (reticle) {
-    reticle.style.display = isSprinting ? 'none' : 'block';
+    reticle.style.display = (isSprinting ? 'none' : 'block');
   }
 
+  
   updateEnemies(dt);
-
 }
 
-// ======== Render =========
+
+// Bucle de render: frame, viewports y minimapa
 function render() {
   requestAnimationFrame(render);
 
   stats.begin();
 
   const now = performance.now() / 1000;
-  const dt = Math.min(0.05, now - prevTime); // clamp para evitar saltos grandes
+  const dt = Math.min(0.05, now - prevTime); 
   prevTime = now;
 
   update(dt);
-  if (mixer) mixer.update(dt);
+  if (mixer) {
+    mixer.update(dt);
+  }
 
-  // Vista principal
+  
   renderer.autoClear = false;
   renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
   renderer.setScissorTest(false);
@@ -1346,7 +1485,7 @@ function render() {
   renderer.clear();
   renderer.render(scene, camera);
 
-  // Minimap
+  
   const ds = Math.min(window.innerWidth, window.innerHeight) * 0.28;
   renderer.setViewport(10, 10, ds, ds);
   renderer.setScissor(10, 10, ds, ds);
