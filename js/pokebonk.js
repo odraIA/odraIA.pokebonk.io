@@ -137,7 +137,7 @@ let e_animationNames = [];
 
 let stats;                              
 
-const DEBUG_ENEMY_HITBOX = true;        
+const DEBUG_ENEMY_HITBOX = false;        
 const ENEMY_HIT_RADIUS = 1.0;           
 
 
@@ -639,8 +639,9 @@ function loadMewtwo() {
   const loader = new THREE.FBXLoader();
 
   
-  loader.load('models/mewtwo/mewtwo.fbx', (mewtwoPrefab) => {
-    normalizeAndFloor(mewtwoPrefab, ENEMY_TARGET_HEIGHT);
+  loader.load('models/mewtwo/mewtwo.fbx', (fbx) => {
+    mewtwoPrefab = fbx;
+    normalizeAndFloor(fbx, ENEMY_TARGET_HEIGHT);
 
     const toRemove = [];
 
@@ -1035,6 +1036,42 @@ function updateProjectiles(dt) {
   }
 }
 
+function forceVisible(root) {
+  root.traverse((n) => {
+    n.visible = true;
+    if (n.layers && n.layers.set) n.layers.set(0);  // Asegura capa 0 (main camera ve capa 0)
+    if (n.isMesh) {
+      const mats = Array.isArray(n.material) ? n.material : [n.material];
+      for (const m of mats) {
+        if (!m) continue;
+        m.transparent = false;
+        m.opacity = 1;
+        m.depthWrite = true;
+        m.depthTest = true;
+        m.side = THREE.FrontSide;
+        if (m.map) m.map.encoding = THREE.sRGBEncoding;
+        m.skinning = !!n.isSkinnedMesh;
+        m.needsUpdate = true;
+      }
+      n.frustumCulled = false;
+      n.castShadow = true;
+      n.receiveShadow = true;
+    }
+  });
+}
+
+function renormalizeInstance(obj, targetH) {
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  if (!isFinite(size.y) || size.y < 1e-4) return; // nada que hacer si no mide
+
+  const s = targetH / size.y;
+  obj.scale.multiplyScalar(s);
+  obj.updateMatrixWorld(true);
+}
+
 
 // Crea enemigos para una oleada, con mixer y acciones
 function spawnEnemies(wave) {
@@ -1045,12 +1082,17 @@ function spawnEnemies(wave) {
 
   for (let i = 0; i < ENEMIES_PER_WAVE + wave; i++) {
     const { x, z } = randomXZ();
-    const y = heightFunc(x, z) + 5.0; 
+    const y = heightFunc(x, z) + 5.0; // cae al suelo luego en update
 
-    
+    // Raiz del enemigo
     const enemyRoot = new THREE.Group();
 
+    // ⚠️ Clonar el prefab ya normalizado
     const model = THREE.SkeletonUtils.clone(mewtwoPrefab);
+    forceVisible(model);
+    renormalizeInstance(model, ENEMY_TARGET_HEIGHT);
+
+    // Ajustes de render
     model.traverse((n) => {
       if (n.isMesh) {
         n.frustumCulled = false;
@@ -1059,20 +1101,13 @@ function spawnEnemies(wave) {
       }
       if (n.isSkinnedMesh) {
         const mats = Array.isArray(n.material) ? n.material : [n.material];
-        mats.forEach((m) => {
-          if (m) {
-            m.skinning = true;
-            m.needsUpdate = true;
-          }
-        });
+        mats.forEach((m) => { if (m) { m.skinning = true; m.needsUpdate = true; } });
       }
     });
 
-    const animRoot = model.getObjectByName('MewtwoAnimatedRoot') || model;
-    model.position.set(0, 0, 0);
+    // Añadir modelo y UI de vida
     enemyRoot.add(model);
 
-    
     const bar = new THREE.Mesh(
       new THREE.PlaneGeometry(0.8, 0.1),
       new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide })
@@ -1080,34 +1115,26 @@ function spawnEnemies(wave) {
     bar.position.set(0, ENEMY_BAR_HEIGHT, 0);
     enemyRoot.add(bar);
 
-    
-    let hitbox = null;
-    if (DEBUG_ENEMY_HITBOX) {
-      const hitboxGeo = new THREE.CylinderGeometry(ENEMY_HIT_RADIUS, ENEMY_HIT_RADIUS, ENEMY_TARGET_HEIGHT, 24);
-      const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: false });
-      hitbox = new THREE.Mesh(hitboxGeo, hitboxMat);
-      hitbox.name = 'EnemyHitbox';
-      hitbox.frustumCulled = false;
-      hitbox.position.set(0, ENEMY_TARGET_HEIGHT * 0.5, 0);
-      enemyRoot.add(hitbox);
-    }
+    // 📌 POSICIONAR el enemigo en el punto de spawn
+    enemyRoot.position.set(x, y, z);
+
+    // (opcional) que mire hacia el jugador desde el inicio
+    enemyRoot.lookAt(p_pos.x, enemyRoot.position.y, p_pos.z);
 
     scene.add(enemyRoot);
 
-    
+    // 🎬 Mixer y acciones
+    // Usar como root el propio modelo (contiene todos los huesos)
+    const animRoot = model;
     const mixer = new THREE.AnimationMixer(animRoot);
     const enemyActions = {};
 
     const idleClip = e_actions[e_animationNames[E_IDLE]];
     const walkClip = e_actions[e_animationNames[E_WALK]];
-    const dieClip = e_actions[e_animationNames[E_DIE]];
+    const dieClip  = e_actions[e_animationNames[E_DIE]];
 
-    if (idleClip) {
-      enemyActions.idle = mixer.clipAction(idleClip).setLoop(THREE.LoopRepeat, Infinity);
-    }
-    if (walkClip) {
-      enemyActions.walk = mixer.clipAction(walkClip).setLoop(THREE.LoopRepeat, Infinity);
-    }
+    if (idleClip) enemyActions.idle = mixer.clipAction(idleClip).setLoop(THREE.LoopRepeat, Infinity);
+    if (walkClip) enemyActions.walk = mixer.clipAction(walkClip).setLoop(THREE.LoopRepeat, Infinity);
     if (dieClip) {
       enemyActions.die = mixer.clipAction(dieClip);
       enemyActions.die.setLoop(THREE.LoopOnce, 1);
@@ -1117,18 +1144,13 @@ function spawnEnemies(wave) {
     let currentAction = null;
     const play = (name) => {
       const next = enemyActions[name];
-      if (!next) {
-        return;
-      }
-      if (currentAction && currentAction !== next) {
-        currentAction.fadeOut(0.2);
-      }
-      next.reset();
-      next.fadeIn(0.2);
-      next.play();
+      if (!next) return;
+      if (currentAction && currentAction !== next) currentAction.fadeOut(0.2);
+      next.reset(); next.fadeIn(0.2); next.play();
       currentAction = next;
     };
 
+    // ✅ Arrancar directamente la animación de caminar
     if (enemyActions.walk) {
       play('walk');
     } else if (enemyActions.idle) {
@@ -1139,12 +1161,12 @@ function spawnEnemies(wave) {
       mesh: enemyRoot,
       hp: ENEMY_HP,
       healthBar: bar,
-      mixer: mixer,
+      mixer,
       actions: enemyActions,
       playAction: play,
-      currentAction: currentAction,
+      currentAction,
       dead: false,
-      hitbox: hitbox,
+      hitbox: null,
       spinHitbox: false,
       spinSpeed: 6.0
     });
@@ -1153,6 +1175,7 @@ function spawnEnemies(wave) {
   console.log(`🌊 Oleada ${wave + 1} con ${ENEMIES_PER_WAVE + wave} Mewtwos.`);
   return true;
 }
+
 
 // Actualiza barra de vida del jugador
 function updateHealthBar() {
@@ -1205,8 +1228,9 @@ function updateEnemies(dt) {
       continue;
     }
 
-    
+
     const dir = new THREE.Vector3().subVectors(p_pos, e.mesh.position).setY(0).normalize();
+    e.mesh.lookAt(p_pos.x, e.mesh.position.y, p_pos.z);
     const proposedPos = e.mesh.position.clone().addScaledVector(dir, ENEMY_SPEED * dt);
     const corrected = resolveEnemyTreeCollisions(proposedPos);
     e.mesh.position.set(corrected.x, e.mesh.position.y, corrected.z);
@@ -1215,7 +1239,7 @@ function updateEnemies(dt) {
     const groundY = heightFunc(e.mesh.position.x, e.mesh.position.z);
     e.mesh.position.y = groundY;
 
-    
+
     if (e.healthBar && e.healthBar.visible) {
       e.healthBar.position.set(0, ENEMY_BAR_HEIGHT, 0);
       e.healthBar.scale.x = Math.max(0.001, e.hp / ENEMY_HP);
@@ -1223,12 +1247,12 @@ function updateEnemies(dt) {
       e.healthBar.lookAt(camera.position);
     }
 
-    
-    if (e.spinHitbox && e.hitbox) {
+
+    if (DEBUG_ENEMY_HITBOX && e.spinHitbox && e.hitbox) {
       e.hitbox.rotation.y += e.spinSpeed * dt;
     }
 
-    
+
     const dist = e.mesh.position.distanceTo(p_pos);
     if (dist < playerRadius + 0.3) {
       if (playerHurtCooldown <= 0) {
