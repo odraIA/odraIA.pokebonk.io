@@ -639,15 +639,15 @@ function loadMewtwo() {
   const loader = new THREE.FBXLoader();
 
   
-  loader.load('models/mewtwo/mewtwo.fbx', (fbx) => {
-    mewtwoPrefab = fbx;
-    normalizeAndFloor(fbx, ENEMY_TARGET_HEIGHT);
+  loader.load('models/mewtwo/mewtwo.fbx', (mewtwoPrefab) => {
+    normalizeAndFloor(mewtwoPrefab, ENEMY_TARGET_HEIGHT);
+
+    const toRemove = [];
 
     mewtwoPrefab.traverse((n) => {
       if (n.isLight || n.isCamera) {
-        if (n.parent) {
-          n.parent.remove(n);
-        }
+        toRemove.push(n);
+        return;
       }
       if (n.isMesh) {
         n.castShadow = true;
@@ -662,6 +662,8 @@ function loadMewtwo() {
         n.frustumCulled = false;
       }
     });
+
+    toRemove.forEach((n) => n.removeFromParent());
 
     checkIfMewtwoIsReady();
   }, undefined, (e) => {
