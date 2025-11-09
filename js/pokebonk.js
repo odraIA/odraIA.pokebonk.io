@@ -310,7 +310,7 @@ function init() {
   scene = new THREE.Scene();
 
   const skyboxLoader = new THREE.CubeTextureLoader();
-  skyboxLoader.setPath('images/');
+  skyboxLoader.setPath('images/skybox/');
   const skybox = skyboxLoader.load([
     'positive_x.bmp',
     'negative_x.bmp',
@@ -664,7 +664,7 @@ function loadMewtwo() {
   const loader = new THREE.FBXLoader();
 
   
-  loader.load('models/mewtwo/mewtwo.fbx', (fbx) => {
+  loader.load('models/mutant/Mutant.fbx', (fbx) => {
     mewtwoPrefab = fbx;
     normalizeAndFloor(fbx, ENEMY_TARGET_HEIGHT);
 
@@ -693,14 +693,14 @@ function loadMewtwo() {
 
     checkIfMewtwoIsReady();
   }, undefined, (e) => {
-    console.error('❌ Error mewtwo.fbx', e);
+    console.error('❌ Error mutant.fbx', e);
   });
 
   
   const animations = [
-    ['models/mewtwo/Idle.fbx', E_IDLE],
-    ['models/mewtwo/Walking.fbx', E_WALK],
-    ['models/mewtwo/Dying Backwards.fbx', E_DIE]
+    ['models/mutant/idle.fbx', E_IDLE],
+    ['models/mutant/walking.fbx', E_WALK],
+    ['models/mutant/dying.fbx', E_DIE]
   ];
 
   animations.forEach(([animFile, index]) => {
