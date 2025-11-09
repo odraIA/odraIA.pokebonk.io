@@ -201,12 +201,12 @@ function addScore() {
 
 // Funcion de altura del terreno basada en ruido Perlin
 function heightFunc(x, z) {
-  
-  const scale1 = 0.03;
-  const scale2 = 0.12;
+
+  const scale1 = 0.05;
+  const scale2 = 0.2;
   const base = noise.perlin2(x * scale1, z * scale1);
-  const detail = 0.3 * noise.perlin2(x * scale2, z * scale2);
-  return (base + detail) + 0.25; 
+  const detail = 0.35 * noise.perlin2(x * scale2, z * scale2);
+  return 3.0 * (base + detail) + 0.25;
 }
 
 
@@ -301,13 +301,26 @@ render();
 function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(new THREE.Color(0x87b2f9)); 
+  renderer.setClearColor(new THREE.Color(0x87b2f9));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputEncoding = THREE.sRGBEncoding;
   document.getElementById('container').appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
+
+  const skyboxLoader = new THREE.CubeTextureLoader();
+  skyboxLoader.setPath('images/');
+  const skybox = skyboxLoader.load([
+    'positive_x.bmp',
+    'negative_x.bmp',
+    'positive_y.bmp',
+    'negative_y.bmp',
+    'positive_z.bmp',
+    'negative_z.bmp'
+  ]);
+  scene.background = skybox;
+  scene.environment = skybox;
 
   
   const aspect = window.innerWidth / window.innerHeight;
@@ -328,9 +341,21 @@ function init() {
   
   const dir = new THREE.DirectionalLight(0xffffff, 1.1);
   dir.position.set(15, 25, 10);
+  dir.target.position.set(0, 0, 0);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
+  dir.shadow.mapSize.set(2048, 2048);
+  const shadowCam = dir.shadow.camera;
+  const shadowRange = 80;
+  shadowCam.left = -shadowRange;
+  shadowCam.right = shadowRange;
+  shadowCam.top = shadowRange;
+  shadowCam.bottom = -shadowRange;
+  shadowCam.near = 0.5;
+  shadowCam.far = 250;
+  dir.shadow.bias = -0.0005;
+  dir.shadow.normalBias = 0.02;
   scene.add(dir);
+  scene.add(dir.target);
 
   const amb = new THREE.AmbientLight(0xffffff, 0.35);
   scene.add(amb);
@@ -807,13 +832,22 @@ function loadAndPlaceTrees(count = 20) {
       }
 
       const t = treePrefab.clone(true);
-      t.position.set(x, y, z);
-      t.rotation.y = Math.random() * Math.PI * 2;
-      t.scale.setScalar(THREE.MathUtils.randFloat(0.20, 0.5));
+      const baseScale = THREE.MathUtils.randFloat(0.2, 0.55);
+      const heightStretch = THREE.MathUtils.randFloat(0.85, 1.35);
+      const scaleVec = new THREE.Vector3(baseScale, baseScale * heightStretch, baseScale);
+      const yaw = Math.random() * Math.PI * 2;
+      const tiltX = THREE.MathUtils.degToRad(THREE.MathUtils.randFloatSpread(4));
+      const tiltZ = THREE.MathUtils.degToRad(THREE.MathUtils.randFloatSpread(4));
+      const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(tiltX, yaw, tiltZ, 'YXZ'));
+      const position = new THREE.Vector3(x, y, z);
+      const matrix = new THREE.Matrix4().compose(position, rotation, scaleVec);
+
+      t.matrixAutoUpdate = false;
+      t.matrix.copy(matrix);
 
       treesGroup.add(t);
 
-      
+
       t.updateWorldMatrix(true, true);
       const bbox = new THREE.Box3().setFromObject(t);
       const height = bbox.max.y - bbox.min.y;
